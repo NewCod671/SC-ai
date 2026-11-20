@@ -1,0 +1,180 @@
+{
+  "version": "1.1.0",
+  "purpose": "Synthetic calibration examples, never customer facts, evidence, requirements or default grades. Apply only when the exact imported requirement supports the stated obligation.",
+  "sources": [
+    {
+      "id": "EA-39.1",
+      "url": "https://european-accreditation.org/sp_accordion_faqs/question-39-1-findings-classification-nonconformities/",
+      "use": "Distinguish an optional improvement from confirmed nonfulfilment."
+    },
+    {
+      "id": "EA-35.10",
+      "url": "https://european-accreditation.org/sp_accordion_faqs/question-35-10-definition-of-nonconformity/",
+      "use": "Severity depends on management-system capability and context; includes ISO/IEC 17021-1 definitions."
+    },
+    {
+      "id": "ISO-IAF-APG-2016",
+      "url": "https://committee.iso.org/files/live/sites/tc176/files/PDF%20APG%20New%20Disclaimer%2012-2023/ISO-TC%20176-TF_APG-DocumentNonconformity.pdf",
+      "use": "General finding-writing method: observation, applicable requirement, and specific gap. ISO 9001 guidance, not an ISO 27001 requirement source."
+    }
+  ],
+  "groups": [
+    {
+      "control_ids": [
+        "A.8.3",
+        "A.5.15",
+        "A.5.18"
+      ],
+      "cases": [
+        {
+          "category": "ofi",
+          "requirement_condition": "Access is restricted by approved roles; reviews occur as required. No requirement mandates automation.",
+          "note": "RBAC active; owners approve access; all scheduled reviews complete. Tracking manual, reconciled without missed reviews; automatic reminders would reduce admin effort.",
+          "distinction": "Required work is complete. Reminder automation is optional, not a missing mandatory step."
+        },
+        {
+          "category": "nc_minor",
+          "requirement_condition": "The applicable recorded procedure requires every in-scope account to receive a monthly review.",
+          "note": "39/40 monthly reviews complete; one temporary account review overdue. Account auto-expired before the due date; SC confirmed login blocked. Other role restrictions and reviews operating.",
+          "distinction": "One mandatory review missed, so not OFI. The recorded expiration and verified block bound the lapse without undermining access protection."
+        },
+        {
+          "category": "nc_major",
+          "requirement_condition": "Production information access must follow approved business roles.",
+          "note": "All production users share unrestricted read/write access. SC tested a normal user editing restricted finance records. No role rules or compensating access controls deployed.",
+          "distinction": "Verified failure across the production access process undermines effective restriction. An actual breach need not have occurred."
+        }
+      ]
+    },
+    {
+      "control_ids": [
+        "A.8.13"
+      ],
+      "cases": [
+        {
+          "category": "ofi",
+          "requirement_condition": "Required backup and restoration activities meet the approved recovery objectives; no centralized dashboard is mandated.",
+          "note": "All scoped systems backed up per schedule; restores tested and recovery targets met. Teams use separate reconciled logs; shared dashboard could simplify tracking.",
+          "distinction": "Targets and required tests are achieved. Consolidated tracking is optional."
+        },
+        {
+          "category": "nc_minor",
+          "requirement_condition": "The approved backup procedure requires daily review of every job result.",
+          "note": "One job-result review missed in 30-day sample. Job completed; independent replication current and restore confirmed within target. Remaining reviews complete; no other affected system found.",
+          "distinction": "Required monitoring was missed in a bounded instance; recorded redundancy and successful restore support maintained recovery capability."
+        },
+        {
+          "category": "nc_major",
+          "requirement_condition": "In-scope critical customer data requires recoverable backups meeting the approved objective.",
+          "note": "Backup jobs for all production customer databases disabled for three months. SC confirmed no alternate copy; recovery test could not restore customer data.",
+          "distinction": "The backup/recovery process is absent for critical scope and demonstrated recovery failure supports material system impact."
+        }
+      ]
+    },
+    {
+      "control_ids": [
+        "A.5.19",
+        "A.5.20",
+        "A.5.22"
+      ],
+      "cases": [
+        {
+          "category": "ofi",
+          "requirement_condition": "Required supplier security reviews and contractual conditions are fulfilled; a single register is not mandatory.",
+          "note": "All scoped suppliers assessed and reviewed on time; required security terms agreed. Separate registers reconciled; consolidated view could simplify oversight.",
+          "distinction": "Existing arrangements fulfil the obligation. A consolidated view is an optional enhancement."
+        },
+        {
+          "category": "nc_minor",
+          "requirement_condition": "The recorded supplier procedure requires an annual security review for each in-scope supplier.",
+          "note": "One of 18 supplier annual reviews late. Supplier account suspended before expiry of review; SC confirmed no live access or new transfers. Other reviews current.",
+          "distinction": "A mandatory review is overdue. The stated suspension and absence of live access bound the lapse; do not invent a supplier-wide breakdown."
+        },
+        {
+          "category": "nc_major",
+          "requirement_condition": "Security risks and requirements must be managed for suppliers handling in-scope customer information.",
+          "note": "No supplier security process deployed for any data processor. All processors have live customer-data access; SC confirmed security obligations not defined or monitored across this scope.",
+          "distinction": "Whole-process absence across active processors creates significant doubt about effective supplier security control."
+        }
+      ]
+    },
+    {
+      "control_ids": [
+        "9.2",
+        "9.2.1",
+        "9.2.2"
+      ],
+      "cases": [
+        {
+          "category": "ofi",
+          "requirement_condition": "The approved internal audit programme meets required scope, independence and schedule; no dashboard is mandatory.",
+          "note": "Planned ISMS audits completed; independent auditors; reports and follow-up current. Separate action logs reconciled; common dashboard could improve visibility.",
+          "distinction": "Required audit activities are complete; consolidated reporting is optional."
+        },
+        {
+          "category": "nc_minor",
+          "requirement_condition": "The recorded audit procedure requires each completed audit report to record its scope and criteria.",
+          "note": "One report omitted its scope field. Approved plan and auditor interview confirmed the audit covered intended scope/criteria; other reports complete and programme operated as planned.",
+          "distinction": "An identified record requirement was missed once. Other recorded facts establish that the audit process itself remained effective."
+        },
+        {
+          "category": "nc_major",
+          "requirement_condition": "The organization must implement its planned ISMS internal audit programme.",
+          "note": "No ISMS internal audits performed during the entire approved cycle; no independent evaluation or alternative assurance. All planned audit scope remains unevaluated.",
+          "distinction": "Confirmed absence of the entire required assurance process supports systemic failure, not merely a single late report."
+        }
+      ]
+    },
+    {
+      "control_ids": [
+        "8.3",
+        "6.1.3"
+      ],
+      "cases": [
+        {
+          "category": "ofi",
+          "requirement_condition": "Required risk treatment actions are implemented and their results retained; no unified dashboard is required.",
+          "note": "Treatment plan implemented; owners confirm completion; results retained. Separate action logs reconciled; a shared dashboard could simplify reporting.",
+          "distinction": "Required treatment and records are complete; consolidated reporting is optional."
+        },
+        {
+          "category": "nc_minor",
+          "requirement_condition": "The applicable procedure requires every completed treatment result to carry a recorded review date.",
+          "note": "One completed low-risk treatment record lacks its review date. Deployment record and owner sign-off confirm completion and effective protection; remaining records complete.",
+          "distinction": "A required record field is missing once; recorded operational safeguards establish a bounded documentation lapse."
+        },
+        {
+          "category": "nc_major",
+          "requirement_condition": "The organization must implement its information security risk treatment plan.",
+          "note": "Risk treatment: no approved plans; critical risks untreated. The note describes the organization-wide risk treatment process.",
+          "distinction": "Combined absence of the treatment process and confirmed untreated critical risks supports systemic ineffectiveness; do not request a security incident to recognize that impact."
+        }
+      ]
+    },
+    {
+      "control_ids": [
+        "4.3"
+      ],
+      "cases": [
+        {
+          "category": "ofi",
+          "requirement_condition": "The scope has all required boundaries, dependencies and interfaces; a one-page visual is not required.",
+          "note": "Scope approved; all required boundaries and interfaces recorded; no required scope element missing. A one-page dependency view could make interfaces quicker to locate.",
+          "distinction": "A useful optional presentation improvement exists while all required scope content is present."
+        },
+        {
+          "category": "nc_minor",
+          "requirement_condition": "The applicable scope-documentation requirement includes identification of the service interface.",
+          "note": "One managed interface omitted from scope appendix. Agreement and risk assessment cover it; both owners confirm effective operation. Other interfaces and boundaries correctly recorded.",
+          "distinction": "A specific documentation obligation is unmet; recorded ownership and controls establish a bounded omission."
+        },
+        {
+          "category": "nc_major",
+          "requirement_condition": "ISMS boundaries and applicability must be determined for implementing the management system.",
+          "note": "No ISMS boundaries determined across the organization. Teams apply conflicting scope; critical services have no risk assessment or assigned controls because responsibility is undefined.",
+          "distinction": "Confirmed absence of scope definition is linked to a breakdown in risk treatment and control responsibility, supporting material system impact."
+        }
+      ]
+    }
+  ]
+}

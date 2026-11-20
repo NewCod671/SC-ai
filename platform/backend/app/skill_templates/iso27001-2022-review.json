@@ -1,0 +1,22 @@
+{
+  "id": "iso27001-2022-review",
+  "extends": "standard-review",
+  "name": "ISO 27001:2022 assessment review",
+  "version": "1.0",
+  "description": "แนวทางตรวจ ISO 27001:2022 ตาม checklist ที่นำเข้า พร้อมแนวทางเสริม 12 control; ไม่ใช่ข้อความมาตรฐานหรือการรับรอง ISO",
+  "scope_note": "Original advisory guidance for an operator-selected ISO 27001:2022 checklist. The imported requirements remain authoritative. Baseline review applies to all imported controls; only the listed exact Annex A IDs have supplemental guidance. Do not claim full ISO coverage from an Annex A-only checklist. Use the supplied risk treatment and Statement of Applicability to examine exclusions; never invent either. This template does not reproduce normative ISO text or supply missing ISMS requirements.",
+  "control_rules": {
+    "A.5.1": "Where required by the imported checklist, compare policy approval, communication and review records; a draft or policy title alone does not establish operation.",
+    "A.5.9": "Compare the supplied inventory's relevant scope, ownership and maintenance records with the imported requirement; do not assume unlisted systems are covered.",
+    "A.5.18": "Examine access approval, review and removal records within the assessed scope. One completed review does not demonstrate all departments or account types.",
+    "A.5.19": "Compare supplier security practices and supplied supplier records with the actual requirement; do not infer coverage of all suppliers from one contract.",
+    "A.5.24": "Distinguish a documented incident preparation plan from evidence that relevant roles and processes are ready, to the extent required by the checklist.",
+    "A.6.3": "Compare awareness or training records with relevant roles and scope. Attendance or acknowledgement is evidence only of what it records, not assumed effectiveness.",
+    "A.6.5": "Check supplied records for relevant termination or role-change responsibilities against the imported requirement; do not infer technical access removal from HR paperwork alone.",
+    "A.7.2": "Compare physical access authorization and available entry records for the relevant locations; cloud access records do not establish office access controls.",
+    "A.8.5": "Examine authentication settings for the systems and account types in scope, including documented exceptions. A statement that MFA is enabled does not prove universal coverage.",
+    "A.8.13": "Distinguish backup execution records from successful restoration evidence. Apply scope, schedules and testing criteria from the actual requirement and supplied policies; invent no recovery target.",
+    "A.8.15": "Compare supplied logging settings and records with the required systems and events. Do not assume monitoring, protection or retention coverage, or invent a mandatory retention period.",
+    "A.8.28": "Compare secure coding practices and supplied development records with the imported requirement. A tool purchase or planned scan alone does not prove adoption."
+  }
+}
