@@ -47,7 +47,7 @@ export default function ClauseReview({ controls, draft, busy, run, onAnswer, onR
       {!note.trim() && <p className="note-review-hint">Enter an audit note to enable AI review.</p>}
       {checking && <p role="status">Waiting for the AI review…</p>}
       {error && <p role="alert" className="notice">{error}</p>}
-      {review && <section className="note-coverage-review" aria-label="AI note coverage review"><h4>AI note coverage review</h4><p>{review.summary}</p>{review.question_coverage?.length > 0 && <section><h5>Information required by the standard</h5><ol className="note-question-coverage">{review.question_coverage.map((item, position) => <li key={position}><strong>{(item.topic || item.question)}</strong><p className={item.status === "covered" ? "note-no-follow-up" : "note-follow-up-needed"}>{({covered:"Covered", partial:"Partially covered", missing:"Missing"})[item.status]}</p>{item.quote && <p>Clause {item.source_control_id}: “{item.quote}”</p>}{item.status !== "covered" && <p className="note-follow-up-needed"><strong>Missing information</strong> · {item.missing_detail || `The note does not fully document: ${(item.topic || item.question)}`}</p>}</li>)}</ol></section>}{review.related_controls?.length > 0 && <p>Related saved notes considered: {review.related_controls.join(", ")}</p>}{review.question_coverage?.length ? (review.question_coverage.every(item => item.status === "covered") && <h5 className="note-no-follow-up">Required information covered</h5>) : <p role="status">Coverage details unavailable. Run the check again to identify missing information.</p>}<small>Suggestion only · {review.provider}</small></section>}
+      {review && <MissingInformation review={review}/>} 
       {finding && <div className="compliance-finding">{finding.rationale || "No assessment result yet"}</div>}
       <nav className="clause-bottom-navigation" aria-label="Navigate between clauses">{previous}<span>{index + 1} / {controls.length}</span>{next}</nav>
     </article>}
@@ -55,3 +55,16 @@ export default function ClauseReview({ controls, draft, busy, run, onAnswer, onR
   </section>;
 }
 
+
+function MissingInformation({ review }) {
+  const topics = review.question_coverage || [];
+  const missing = topics.filter(topic => topic.status !== "covered");
+  return <section className="note-coverage-review" aria-label="Missing information">
+    {!topics.length ? <p role="status">Coverage details unavailable.</p>
+      : !missing.length ? <p className="note-no-follow-up">No missing information identified.</p>
+      : <><h4 className="note-follow-up-needed">Missing information</h4>
+        <ul>{missing.map((item, index) => <li className="note-follow-up-needed" key={index}>
+          <strong>{item.topic || item.question}</strong>{item.missing_detail && <p>{item.missing_detail}</p>}
+        </li>)}</ul></>}
+  </section>;
+}

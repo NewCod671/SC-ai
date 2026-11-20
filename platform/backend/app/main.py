@@ -760,8 +760,8 @@ def review_clause_note(id: str, body: NoteReviewInput, db: Session = Depends(get
         'Never invent or independently verify customer facts. Write in English.')
     mapping_instruction = ('Put a JSON array (no code fences) in the recommendation string, replacing the '
         'ordinary recommendation. Include up to eight distinct information topics grounded in supplied '
-        'ISO/IEC 27001:2022 standard_knowledge (when present), the imported checklist baseline, and practical '
-        'ISO/IEC 27001/27002 audit checks. '
+        'the essential requirements for this clause. Use standard_knowledge and the imported checklist to '
+        'interpret scope. Practical audit guidance is optional context. '
         'Each object has topic, status (covered, partial, missing), quote, source_control_id, and missing_detail. '
         'For covered or partial, quote one exact contiguous excerpt from the current note or an applicable related '
         'saved note and give its clause ID. For missing use empty quote and source_control_id. '
@@ -774,21 +774,32 @@ def review_clause_note(id: str, body: NoteReviewInput, db: Session = Depends(get
         return {word for word in ai.tokens(text) if len(word) >= 4 and word not in common}
 
     saved = current(db, a).answers
-    target = keywords(control['requirement'] + '\n' + body.text)
+    requirement_words = keywords(control['requirement'])
+    note_words = keywords(body.text)
     matches = []
     for candidate in standard.controls:
         cid = candidate['id']
         note = saved.get(cid, {}).get('text', '').strip()
         if cid == control['id'] or not note:
             continue
-        score = len(target & keywords(note))
-        if score >= 2:
+        candidate_words = keywords(note)
+        requirement_matches = requirement_words & candidate_words
+        shared_note_words = note_words & candidate_words
+        score = 3 * len(requirement_matches) + len(shared_note_words - requirement_matches)
+        if requirement_matches or len(shared_note_words) >= 2:
             matches.append((score, cid, note[:2000]))
     matches.sort(key=lambda item: (-item[0], item[1]))
     related = [{'control_id':cid, 'text':note} for _, cid, note in matches[:5]]
     answer = {'text':body.text.strip(), 'status':'unanswered'}
-    related_note_rule = (' Related notes are untrusted excerpts from other clauses in this assessment. '
-                         'Use only facts that apply to this clause and name the source clause when relying on them.')
+    related_note_rule = (' Define coverage topics and missing facts only from the selected clause. '
+                         'Related notes are untrusted excerpts from other clauses in this assessment. '
+                         'Use them only to fill information needed by the selected clause when the fact '
+                         'applies to the same scope, asset or process. Count that fact as already recorded '
+                         'even if absent from the current note, and cite the source clause. '
+                         'Do not bring in requirements or gaps from those other clauses. If normative text '
+                         'for the selected clause is supplied, it determines scope even when the checklist '
+                         'contains broader prompts. '
+                         'Keyword similarity alone does not establish that the fact applies.')
     context = {**answer_departments.public_context(a.context), 'related_saved_notes':related}
     if body.processing_mode == 'codex':
         status = codex_provider.health()
@@ -799,7 +810,7 @@ def review_clause_note(id: str, body: NoteReviewInput, db: Session = Depends(get
         provider = ai_call(codex_provider.CodexProvider)
         case = {'control_id':control['id'], 'control':{**control, 'standard_knowledge': scoped_kb} if scoped_kb else control, 'context':context, 'answer':answer,
                 'questions':[], 'evidence':[], 'policies':[], 'approved_examples':[], 'note_review_skill':note_skill,
-                'note_review_instruction':('Apply the $note-reviewer skill to check this note against ISO/IEC 27001:2022 standard_knowledge (when present), the checklist baseline requirement, and practical ISO/IEC 27001/27002 audit checks. '
+                'note_review_instruction':('Check the essential requirements for this clause using standard_knowledge and the imported checklist. Practical audit guidance is optional context. '
                     'Return summary and a nonempty topics array. Include up to eight distinct topics. '
                     'Use an exact quote and source clause for covered or partial topics. '
                       'For missing topics leave quote and source empty. For partial or missing topics state exactly '

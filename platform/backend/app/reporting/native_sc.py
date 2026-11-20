@@ -11,6 +11,7 @@ from zipfile import ZipFile, ZIP_DEFLATED
 import json
 import hashlib
 import re
+from textwrap import wrap
 from lxml import etree as ET
 from openpyxl.utils import coordinate_to_tuple, get_column_letter, range_boundaries
 from . import excel
@@ -98,6 +99,42 @@ class Editor:
             if formula is not None: ET.SubElement(cell,f'{{{excel.NS}}}f').text=formula.lstrip('=')
             ET.SubElement(cell,f'{{{excel.NS}}}v').text=str(value)
         self.values[(sheet,ref)] = value
+
+    def expose_control_rows(self, refs):
+        for sheet, root in self.roots.items():
+            controls = [ref for ref in refs.values() if ref['sheet'] == sheet]
+            if not controls:
+                continue
+            ns = f'{{{excel.NS}}}'
+            cells = {coordinate_to_tuple(f'{ref[key]}{ref["row"]}')
+                     for ref in controls for key in ('answer', 'result')}
+            merges = root.find(f'{ns}mergeCells')
+            if merges is not None:
+                for merge in list(merges):
+                    left, top, right, bottom = range_boundaries(merge.get('ref'))
+                    if any(top <= row <= bottom and left <= col <= right
+                           and (row != top or col != left) for row, col in cells):
+                        merges.remove(merge)
+                if len(merges):
+                    merges.set('count', str(len(merges)))
+                else:
+                    root.remove(merges)
+            rows = {int(row.get('r')): row for row in root.iter(f'{ns}row')}
+            widths = list(root.iter(f'{ns}col'))
+            for ref in controls:
+                row = rows[ref['row']]
+                height = float(row.get('ht', '15'))
+                for key in ('answer', 'result'):
+                    address = f'{ref[key]}{ref["row"]}'
+                    _, col = coordinate_to_tuple(address)
+                    width = next((float(item.get('width', '12')) for item in widths
+                                  if int(item.get('min')) <= col <= int(item.get('max'))), 12)
+                    text = str(self.values.get((sheet, address), ''))
+                    lines = sum(max(1, len(wrap(line, width=max(8, int(width * 0.9)))))
+                                for line in text.splitlines())
+                    height = max(height, min(409, lines * 15 + 8))
+                row.set('ht', str(height))
+                row.set('customHeight', '1')
 
     def result_colors(self,refs,explicit_white=False,static_only=False):
         styles=excel.xml(self.parts['xl/styles.xml'])
@@ -366,6 +403,7 @@ def export(controls,answers,manifest,results=None,questions=None,stale=False,unr
         e(sheet,f'{r["owner"]}{row}',(department_overrides or {}).get(cid,c['department']))
         if cid in qs:e(sheet,f'B{row}',qs[cid])
         if grade in GRADES:e(sheet,f'{r["marks"][GRADES.index(grade)]}{row}',MARKS[GRADES.index(grade)])
+    editor.expose_control_rows(refs)
     for sheet,root in editor.roots.items():
         excel.white_cell_fills(editor.parts,root,result_cells[sheet],unlock=True)
         excel.unprotect_sheet(root)
