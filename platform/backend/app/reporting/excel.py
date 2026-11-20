@@ -58,10 +58,24 @@ def preview(data, sheet=None, page=1):
         if page < 1 or page > pages:
             raise ValueError('Preview page is out of range')
         start = (page - 1) * 50 + 1
+        end = min(ws.max_row, start + 49)
         rows = [[str(cell.value) if cell.value is not None else '' for cell in row]
-                for row in ws.iter_rows(min_row=start, max_row=min(ws.max_row, start + 49), max_col=ws.max_column)]
+                for row in ws.iter_rows(min_row=start, max_row=end, max_col=ws.max_column)]
+        merges = []
+        for region in ws.merged_cells.ranges:
+            top, bottom = max(start, region.min_row), min(end, region.max_row)
+            if top <= bottom:
+                anchor = ws.cell(region.min_row, region.min_col)
+                rows[top - start][region.min_col - 1] = str(anchor.value) if anchor.value is not None else ''
+                merges.append({'row': top - start, 'column': region.min_col - 1,
+                               'rowSpan': bottom - top + 1, 'colSpan': region.size['columns']})
+        widths = [ws.sheet_format.defaultColWidth or 13] * ws.max_column
+        for dimension in ws.column_dimensions.values():
+            for index in range(dimension.min - 1, min(dimension.max, ws.max_column)):
+                widths[index] = dimension.width
         return {'sheets': sheets, 'sheet': ws.title, 'page': page, 'pages': pages,
                 'start_row': start, 'total_rows': ws.max_row,
+                'merges': merges, 'column_widths': widths,
                 'columns': [get_column_letter(i) for i in range(1, ws.max_column + 1)], 'rows': rows}
     finally:
         wb.close()

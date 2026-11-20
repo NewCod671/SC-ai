@@ -384,7 +384,10 @@ def export(controls,answers,manifest,results=None,questions=None,stale=False,unr
             rationale=str(f.get('rationale') or f.get('audit',{}).get('reason') or '').strip()
             rationale=re.sub(r'^\s*(?:(?:Audit\s+Finding|Finding)\s*:\s*|Status\s*:\s*(?:C|OFI|N|M|Comply|NC-Minor|NC-Major)\s*[:\-–—]?\s*|(?:C|OFI|N|M|Comply|NC-Minor|NC-Major)\s*[:\-–—]\s*)',
                              '',rationale,flags=re.IGNORECASE)
+            rationale = re.sub(r'(?im)^[ \t]*document reference[ \t]*:[ \t]*', '', rationale)
             details=[rationale] if rationale else ['Not assessed.']
+            if grade == 'needs_review':
+                details.insert(0, 'Needs review')
         elif stale:
             details=['Reassessment required.']
         elif not stale and cid in failed:

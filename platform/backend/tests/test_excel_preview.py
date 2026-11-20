@@ -44,6 +44,23 @@ def test_preview_pages_visible_sheets_and_keeps_formulas_inert():
             excel.preview(data, page=page)
 
 
+def test_preview_preserves_column_widths_and_merges_across_pages():
+    wb = Workbook()
+    ws = wb.active
+    ws.column_dimensions.group('B', 'C')
+    ws.column_dimensions['B'].width = 34
+    ws['B49'] = 'Shared heading'
+    ws.merge_cells('B49:C52')
+    stream = BytesIO()
+    wb.save(stream)
+    first = excel.preview(stream.getvalue())
+    second = excel.preview(stream.getvalue(), page=2)
+    assert first['column_widths'][1:] == [34, 34]
+    assert first['merges'] == [{'row': 48, 'column': 1, 'rowSpan': 2, 'colSpan': 2}]
+    assert second['merges'] == [{'row': 0, 'column': 1, 'rowSpan': 2, 'colSpan': 2}]
+    assert second['rows'][0][1] == 'Shared heading'
+
+
 def test_assessment_preview_matches_export_and_never_writes(db):
     s = standard(db)
     a = assessment(db, s.id)

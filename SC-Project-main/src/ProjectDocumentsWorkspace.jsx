@@ -7,7 +7,6 @@ const categoryTitles = {
   manload: "Manload Source Documents",
   proposal: "Proposal Source Documents",
   kickoff: "Kick-off Source Documents",
-  audit: "Audit Plan, Checklist & Notes",
   report: "Audit Report & CAR Sources",
   close: "Close Meeting Summary",
   policy: "Policy & Procedure"
@@ -16,7 +15,6 @@ const categoryTypes = {
   manload: ["manload"],
   proposal: ["proposal", "org_chart", "timeline", "team_profile"],
   kickoff: ["kickoff"],
-  audit: ["audit_plan", "audit_checklist", "audit_note"],
   report: ["audit_report", "car_form"],
   close: ["close_meeting"],
   policy: ["isms_manual", "policy", "procedure", "user_access_procedure"]
@@ -28,9 +26,6 @@ const labels = {
   timeline: "Project Timeline",
   team_profile: "Team Profile",
   kickoff: "Kickoff Presentation",
-  audit_plan: "Audit Plan",
-  audit_checklist: "Audit Checklist",
-  audit_note: "Audit Note",
   audit_report: "Audit Report",
   car_form: "Corrective Action Request Form",
   close_meeting: "Close Meeting Slide - Audit Summary",
@@ -40,9 +35,6 @@ const labels = {
   user_access_procedure: "User Access Management Procedure"
 };
 const exportFormats = {
-  audit_plan: "docx",
-  audit_checklist: "xlsx",
-  audit_note: "docx",
   audit_report: "docx",
   car_form: "xlsx",
   isms_manual: "docx",
@@ -65,13 +57,6 @@ const documentControlFields = [
   ["approvedBy", "Approved by", false], ["approvedDate", "Approval date", false]
 ];
 const formFields = {
-  audit_plan: [
-    ...documentControlFields,
-    ["standard", "Audit standard", false], ["objective", "Audit objective", true], ["scope", "Scope", true],
-    ["criteria", "Audit criteria", true], ["method", "Audit method", true], ["locations", "Locations", false],
-    ["auditDates", "Audit dates", false], ["auditTeam", "Audit team and roles", true], ["auditeeContact", "Auditee contact / department", true], ["agenda", "Schedule and agenda", true],
-    ["risks", "Risks and dependencies", true], ["references", "References and source documents", true]
-  ],
   audit_report: [
     ...documentControlFields,
     ["standard", "Audit standard", false], ["objective", "Audit objective", true], ["scope", "Audit scope", true],
@@ -91,20 +76,6 @@ const formFields = {
     ["correctiveAction", "Corrective action plan", true], ["actionOwner", "Responsible person", false], ["dueDate", "Planned implementation date", false],
     ["actualImplementationDate", "Actual implementation date", false], ["implementationEvidence", "Implementation evidence", true],
     ["concernedManager", "Concerned department manager", false], ["effectivenessCheck", "Effectiveness check and closure", true], ["effectivenessDate", "Verification date", false]
-  ],
-  audit_checklist: [
-    ...documentControlFields,
-    ["standard", "Audit standard", false], ["scope", "Scope", true], ["locations", "Audit location", false], ["auditeeContact", "Auditee / department", true],
-    ["auditDates", "Audit dates", false], ["checklistItems", "Checklist rows", true, "One row per line: control | requirement | question | expected evidence | result | auditor note"],
-    ["references", "References and source documents", true]
-  ],
-  audit_note: [
-    ...documentControlFields,
-    ["sessionDate", "Session date and time", false], ["session", "Session or process", false],
-    ["department", "Department / auditee", false], ["participants", "Participants and roles", true],
-    ["controlReference", "Control or requirement reference", false], ["evidence", "Evidence reviewed", true],
-    ["observations", "Auditor notes and observations", true], ["openQuestions", "Open questions", true],
-    ["followUp", "Follow-up actions", true]
   ],
   close_meeting: [
     ...documentControlFields,
@@ -369,7 +340,7 @@ export default function ProjectDocumentsWorkspace({ mode, userRole, userId }) {
           {error && <div className="auth-error project-doc-alert"><AlertCircle size={15}/><span>{error}</span></div>}
           <form className="project-doc-form" onSubmit={saveDraft}>
             <div className="project-doc-grid two"><label className="project-doc-field">Document type<select value={documentType} onChange={e => selectType(e.target.value)}>{editableTypes.map(type => <option key={type} value={type}>{labels[type]}</option>)}</select></label><label className="project-doc-field">Supporting source from this project<select value={fields.sourceDocumentId || ""} onChange={e => setFields(current => ({ ...current, sourceDocumentId: e.target.value }))}><option value="">No source linked</option>{importedSources.map(document => <option key={document.id} value={document.id}>{document.source_filename}</option>)}</select><small>Imported references from other projects are never available here.</small></label></div>
-            <div className="project-doc-fields-grid">{(formFields[documentType] || []).map(([key, label, multiline, placeholder]) => <label className={`project-doc-field ${multiline ? "wide" : ""}`} key={key}>{label}{multiline ? <textarea value={fields[key] || ""} onChange={e => setFields(current => ({ ...current, [key]: e.target.value }))} placeholder={placeholder || "Enter verified project information"}/> : <input value={fields[key] || ""} onChange={e => setFields(current => ({ ...current, [key]: e.target.value }))} placeholder="Enter verified project information"/>}{key === "checklistItems" && <small>Columns export to Excel: control, topic, question, evidence, result and auditor notes.</small>}</label>)}</div>
+            <div className="project-doc-fields-grid">{(formFields[documentType] || []).map(([key, label, multiline, placeholder]) => <label className={`project-doc-field ${multiline ? "wide" : ""}`} key={key}>{label}{multiline ? <textarea value={fields[key] || ""} onChange={e => setFields(current => ({ ...current, [key]: e.target.value }))} placeholder={placeholder || "Enter verified project information"}/> : <input value={fields[key] || ""} onChange={e => setFields(current => ({ ...current, [key]: e.target.value }))} placeholder="Enter verified project information"/>}</label>)}</div>
             {activeTemplate && <section className="project-template-inputs">
               <div className="panel-heading"><div><h4>Fields found in the organization template</h4><p>Fill only the placeholders that apply. Blank fields stay visibly marked for completion in the Word file.</p></div></div>
               {activeTemplate.tokens.some(item => item.token === "[LOGO]") && <p className="project-template-note">The logo is an image placeholder. Insert the approved logo in Word after exporting.</p>}

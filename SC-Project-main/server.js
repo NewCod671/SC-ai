@@ -1978,4 +1978,5 @@ if (process.env.NODE_ENV === "production") {
   const vite = await createServer({ server: { middlewareMode: true }, appType: "spa" });
   app.use(vite.middlewares);
 }
-app.listen(port, "127.0.0.1", () => console.log(`SC Control Center running at http://127.0.0.1:${port}`));
+const host = process.env.SC_WEB_HOST || "127.0.0.1";
+app.listen(port, host, () => console.log(`SC Control Center listening on ${host}:${port}`));

@@ -1,9 +1,9 @@
 {
-  "iso27001-auditor": "1.13.0",
+  "iso27001-auditor": "1.14.0",
   "evidence-validator": "1.4.0",
-  "finding-classifier": "1.16.0",
+  "finding-classifier": "1.17.0",
   "auditor-feedback": "1.0.0",
   "excel-report": "1.0.0",
   "question-generator": "1.0.0",
-  "note-reviewer": "1.2.3"
+  "note-reviewer": "1.2.6"
 }

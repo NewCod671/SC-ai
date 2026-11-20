@@ -155,4 +155,19 @@
 :root:not([data-theme="light"]) .note-coverage-review .note-follow-up-needed { color:#ff8b96; }
 :root:not([data-theme="light"]) .note-coverage-review .note-no-follow-up { color:#65d99b; }
 .note-question-coverage { display:grid;gap:12px;padding-inline-start:24px; } .note-question-coverage li { padding:10px 14px;border:1px solid var(--line,var(--border));border-radius:8px; } .note-question-coverage li p { margin:6px 0; }
-.excel-preview{display:grid;gap:14px;padding:20px;margin-bottom:24px;border:1px solid var(--line,var(--border));border-radius:12px;min-width:0}.excel-preview-toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.excel-preview-toolbar h3{margin:0 auto 0 0}.excel-preview-toolbar select{max-width:280px}.excel-preview-scroll{overflow:auto;max-height:60vh}.excel-preview table{border-collapse:collapse;width:max-content}.excel-preview :is(th,td){border:1px solid var(--line,var(--border));padding:8px 12px;text-align:left;vertical-align:top}.excel-preview td{max-width:380px;white-space:pre-wrap;overflow-wrap:anywhere}.excel-preview thead{position:sticky;top:0;background:var(--panel)}
+.excel-preview { display:grid;grid-template-columns:minmax(0,1fr);gap:12px;padding:20px;margin-bottom:24px;border:1px solid var(--line,var(--border));border-radius:12px;min-width:0; }
+.excel-preview > p { margin:0;color:var(--muted); }
+.excel-preview-toolbar { display:flex;gap:12px;align-items:center;flex-wrap:wrap; }
+.excel-preview-toolbar h3,.excel-preview-footer > span:first-child { margin:0 auto 0 0; }
+.excel-preview-sheets { display:flex;gap:4px;overflow-x:auto;padding:2px; }
+.excel-preview-sheets button { flex:none;padding:8px 14px;border:1px solid var(--line,var(--border));border-radius:6px;background:var(--panel);color:inherit;font:inherit;cursor:pointer; }
+.excel-preview-sheets button[aria-current] { background:#e4f3ea;border-color:#268258;color:#155336;font-weight:600; }
+.excel-preview-scroll { overflow:auto;max-height:60vh;border:1px solid #bdceca;background:#fff; }
+.excel-preview-scroll table { table-layout:fixed;border-collapse:separate;border-spacing:0;margin:0;color:#21302a;font-size:13px;line-height:1.5; }
+.excel-preview-scroll :is(th,td) { border:0;border-right:1px solid #d8e1de;border-bottom:1px solid #d8e1de;padding:8px 10px;vertical-align:top; }
+.excel-preview-scroll td { background:#fff;text-align:left;white-space:pre-wrap;overflow-wrap:anywhere; }
+.excel-preview-scroll th { background:#edf3ef;text-align:center;color:#43594e; }
+.excel-preview-scroll thead th { position:sticky;top:0;z-index:2; }
+.excel-preview-scroll tr > th:first-child { position:sticky;left:0;z-index:1; }
+.excel-preview-scroll thead tr > th:first-child { z-index:3; }
+.excel-preview-footer { font-size:13px; }

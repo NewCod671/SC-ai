@@ -11,3 +11,5 @@ data/
 *.sqlite-wal
 *.db
 *.db-*
+
+.vercel

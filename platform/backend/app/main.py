@@ -837,30 +837,61 @@ def review_clause_note(id: str, body: NoteReviewInput, db: Session = Depends(get
     raw = finding.get('recommendation') or ''
     sources = {item['control_id']: item['text'] for item in related}
     sources[control['id']] = answer['text']
-    coverage = []
-    try:
-        rows = finding.get('coverage_topics')
-        if rows is None:
-            rows = json.loads(raw)
-    except ValueError:
-        rows = None
-    if isinstance(rows, list):
-        def field(row, key):
-            return row[key].strip() if isinstance(row.get(key), str) else ''
-        for row in rows[:8]:
-            if not isinstance(row, dict):
-                continue
-            topic = field(row, 'topic') or field(row, 'question')
-            if not topic:
-                continue
-            status, quote, source = (field(row, key) for key in ('status', 'quote', 'source_control_id'))
-            if status not in {'covered', 'partial'} or not quote or quote not in sources.get(source, ''):
-                status, quote, source = 'missing', '', ''
-            coverage.append({'topic':topic, 'status':status, 'quote':quote,
-                             'source_control_id':source,
-                             'missing_detail':'' if status == 'covered' else field(row,'missing_detail'),
-                             'follow_up':'' if status == 'covered' else (
-                                 field(row,'follow_up') if field(row,'follow_up').endswith('?') else field(row,'question'))})
+    def validate_topics(result):
+        coverage = []
+        raw = result.get('recommendation') or ''
+        try:
+            rows = result.get('coverage_topics')
+            if rows is None:
+                rows = json.loads(raw)
+        except ValueError:
+            rows = None
+        if isinstance(rows, list):
+            def field(row, key):
+                return row[key].strip() if isinstance(row.get(key), str) else ''
+            for row in rows[:8]:
+                if not isinstance(row, dict):
+                    continue
+                topic = field(row, 'topic') or field(row, 'question')
+                if not topic:
+                    continue
+                status, quote, source = (field(row, key) for key in ('status', 'quote', 'source_control_id'))
+                missing_detail = field(row, 'missing_detail')
+                if status in {'covered', 'partial'} and (
+                    not quote or ' '.join(quote.split()) not in ' '.join(sources.get(source, '').split())
+                ):
+                    quote, source = '', ''
+                    status = 'unverified'
+                if status in {'missing', 'partial'} and not missing_detail:
+                    status = 'unverified'
+                if not quote or not source or status == 'missing':
+                    quote, source = '', ''
+                coverage.append({'topic':topic, 'status':status, 'quote':quote,
+                                 'source_control_id':source,
+                                 'missing_detail':missing_detail if status in {'missing', 'partial'} else '',
+                                 'follow_up':'' if status not in {'missing', 'partial'} else (
+                                     field(row,'follow_up') if field(row,'follow_up').endswith('?') else field(row,'question'))})
+        return coverage, rows
+
+    coverage, rows = validate_topics(finding)
+    unresolved = [topic['topic'] for topic in coverage if topic['status'] == 'unverified']
+    if body.processing_mode == 'codex' and unresolved:
+        repair_case = {**case, 'context':{**context, 'coverage_topics_to_recheck':unresolved},
+                       'note_review_instruction':case['note_review_instruction'] + (
+                           ' This is a repair pass. Recheck only coverage_topics_to_recheck from context and '
+                           'preserve their exact topic names. For covered or partial, copy a short verbatim '
+                           'excerpt from a single source note, with its exact source clause ID. For missing or '
+                           'partial, state a concrete undocumented fact. Do not add new topics.')}
+        try:
+            repaired, _ = validate_topics(ai_call(provider.assess_control, repair_case))
+        except HTTPException:
+            repaired = []
+        verified = {topic['topic'].casefold():topic for topic in repaired if topic['status'] != 'unverified'}
+        coverage = [verified.get(topic['topic'].casefold(), topic) if topic['status'] == 'unverified' else topic
+                    for topic in coverage]
+        db.refresh(a)
+        if a.current_version != body.expected_version:
+            raise HTTPException(409, 'Assessment changed during review; reload and check again')
     return {'control_id':control['id'], 'provider':provider.name, 'summary':finding.get('rationale',''),
             'missing_details':(finding.get('audit') or {}).get('requirement_gap',''),
             'follow_up':'\n'.join(row['follow_up'] for row in coverage if row['follow_up']) if coverage else (raw if rows is None and not raw.lstrip().startswith('[') else ''),

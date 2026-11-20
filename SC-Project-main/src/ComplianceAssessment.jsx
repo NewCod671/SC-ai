@@ -58,7 +58,7 @@ export default function ComplianceAssessment({ projects = [] }) {
       setAssessment(value);
       if (value) {
         setDraft(toAuditNotes(value.answers || {})); setProcessingMode("codex");
-        api(`${endpoint}/assessment/${value.id}/runs`).then(runs => { if (active) setAssessmentRun(runs.at(-1) || null); }).catch(() => {});
+        api(`${endpoint}/assessment/${value.id}/runs`).then(runs => { if (active) setAssessmentRun(runs.at(-1) || null); }).catch(() => { if (active) setError("Could not load assessment results."); });
       }
       else setNotice("No assessment is linked to this project. Select a standard to create an audit checklist.");
     }).catch(e => { if (active) setError(e.message); });
@@ -84,7 +84,7 @@ export default function ComplianceAssessment({ projects = [] }) {
     setBusy(true); setError("");
     try {
       const result = await api(`${endpoint}/assessment/${assessment.id}/answers`, { method: "PUT", body: JSON.stringify({ expected_version: assessment.current_version, answers: draft }) });
-      setAssessment(result); setDraft(toAuditNotes(result.answers || {})); setAssessmentRun(null); setNotice("Answers saved.");
+      setAssessment(result); setDraft(toAuditNotes(result.answers || {})); setNotice("Answers saved.");
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
   }
@@ -97,17 +97,25 @@ export default function ComplianceAssessment({ projects = [] }) {
     }
     finally {setBusy(false);}
   }
-  async function runAssessment() {
+  async function runAssessment(fullReassessment = false) {
     if (!assessment) return;
     setBusy(true); setError(""); setNotice("");
     let jobId = "";
     try {
-      const modeSaved = await api(`${endpoint}/assessment/${assessment.id}/processing-mode`, { method: "PUT", body: JSON.stringify({ expected_version: assessment.current_version, mode: processingMode }) });
-      const saved = await api(`${endpoint}/assessment/${assessment.id}/answers`, { method: "PUT", body: JSON.stringify({ expected_version: modeSaved.current_version, answers: draft }) });
+      const dirty = JSON.stringify(draft) !== JSON.stringify(toAuditNotes(assessment.answers || {}));
+      const { assessment: latest } = await api(`${endpoint}/assessment`);
+      if (!latest || latest.id !== assessment.id) throw new Error("The linked assessment changed. Reopen the project to assess it.");
+      if (dirty && latest.current_version !== assessment.current_version) {
+        throw new Error("A newer version was saved while you were editing. Your draft is still here. Copy your edits before reopening the project.");
+      }
+      const modeSaved = await api(`${endpoint}/assessment/${assessment.id}/processing-mode`, { method: "PUT", body: JSON.stringify({ expected_version: latest.current_version, mode: processingMode }) });
+      const saved = dirty
+        ? await api(`${endpoint}/assessment/${assessment.id}/answers`, { method: "PUT", body: JSON.stringify({ expected_version: modeSaved.current_version, answers: draft }) })
+        : modeSaved;
       setAssessment(saved); setDraft(toAuditNotes(saved.answers || {}));
       const job = await api(`${endpoint}/assessment/${assessment.id}/run-jobs`, { method: "POST", body: "{}" }); jobId = job.id;
       setProgress({ id: jobId, status: "pending", completed: 0, total: 0 });
-      const runPromise = api(`${endpoint}/assessment/${assessment.id}/runs`, { method: "POST", body: JSON.stringify({ job_id: jobId, processing_mode: processingMode, authorize_external: true }) });
+      const runPromise = api(`${endpoint}/assessment/${assessment.id}/runs`, { method: "POST", body: JSON.stringify({ job_id: jobId, processing_mode: processingMode, authorize_external: true, full_reassessment: fullReassessment }) });
       await waitForAssessment({ request:runPromise, getState:()=>api(`/api/compliance/projects/${encodeURIComponent(projectId)}/jobs/${jobId}`), onProgress:setProgress });
       const refreshed = await api(`${endpoint}/assessment`);
       setAssessment(refreshed.assessment); setDraft(toAuditNotes(refreshed.assessment?.answers || saved.answers));
@@ -136,7 +144,7 @@ export default function ComplianceAssessment({ projects = [] }) {
       const dirty=JSON.stringify(draft)!==JSON.stringify(assessment.answers || {});
       if(dirty){
         saved=await api(`${endpoint}/assessment/${assessment.id}/answers`,{method:"PUT",body:JSON.stringify({expected_version:assessment.current_version,answers:draft})});
-        setAssessment(saved);setDraft(toAuditNotes(saved.answers || {}));setAssessmentRun(null);
+        setAssessment(saved);setDraft(toAuditNotes(saved.answers || {}));
       }
       const path=!dirty && run?.processing_mode === "codex" ? `agent-runs/${encodeURIComponent(run.id)}/export` : "export";
       const response=await fetch(`${endpoint}/assessment/${assessment.id}/${path}`,{credentials:"same-origin"});
@@ -146,7 +154,7 @@ export default function ComplianceAssessment({ projects = [] }) {
       setNotice("Excel exported with saved answers. Current assessment findings are included when available.");
     }catch(error){setError(error.message);}finally{setBusy(false);}
   }
-  const run = assessmentRun && !assessmentRun.stale ? assessmentRun : null;
+  const run = assessmentRun && !assessmentRun.stale && assessmentRun.revision === assessment?.current_version ? assessmentRun : null;
   const grade = item => ({comply:"C",ofi:"OFI",nc_minor:"NC-Minor",nc_major:"NC-Major",needs_review:"Needs review",not_applicable:"N/A"}[item.audit?.category] || item.audit?.grade || item.status || "Not assessed");
 
   return <section className="module-page compliance-page">
@@ -171,13 +179,13 @@ export default function ComplianceAssessment({ projects = [] }) {
       </>}
     </section>
     {assessment && <>
-      <section className="panel"><div className="panel-heading"><div><h3>{assessment.name}</h3><p>{assessment.controls?.length || 0} controls · Version {assessment.current_version} · {assessment.context?.company}</p></div><div className="audit-actions"><button className="secondary-button" onClick={saveAnswers} disabled={busy}><Save size={15}/>Save</button><label className="audit-field">AI mode<select value={processingMode} disabled={busy} onChange={e=>setProcessingMode(e.target.value)}><option value="colab">Colab / configured provider</option><option value="codex">Codex CLI</option></select></label><button className="primary-button" onClick={runAssessment} disabled={busy}><Play size={15}/>Assess notes</button>{progress && <button className="secondary-button" onClick={stopAssessment}><Square size={14}/>Stop</button>}<button className="secondary-button" disabled={busy} onClick={() => setPreviewOpen(true)}>View Excel</button><button className="secondary-button" disabled={busy} onClick={exportWorkbook}><Download size={15}/>Export Excel</button></div></div>
+      <section className="panel"><div className="panel-heading"><div><h3>{assessment.name}</h3><p>{assessment.controls?.length || 0} controls · Version {assessment.current_version} · {assessment.context?.company}</p></div><div className="audit-actions"><button className="secondary-button" onClick={saveAnswers} disabled={busy}><Save size={15}/>Save</button><label className="audit-field">AI mode<select value={processingMode} disabled={busy} onChange={e=>setProcessingMode(e.target.value)}><option value="colab">Colab / configured provider</option><option value="codex">Codex CLI</option></select></label><button className="primary-button" onClick={() => runAssessment()} disabled={busy}><Play size={15}/>Assess notes</button><button type="button" className="secondary-button" onClick={() => runAssessment(true)} disabled={busy}>Recheck all</button>{progress && <button className="secondary-button" onClick={stopAssessment}><Square size={14}/>Stop</button>}<button className="secondary-button" disabled={busy} onClick={() => setPreviewOpen(true)}>View Excel</button><button className="secondary-button" disabled={busy} onClick={exportWorkbook}><Download size={15}/>Export Excel</button></div></div>
 
         {progress && <p role="status">Assessing {progress.completed || 0}/{progress.total || assessment.controls?.length || 0} · {progress.phase || progress.status}</p>}
 
         <div className="compliance-filter"><Search size={15}/><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Search clauses or audit notes"/></div>
         {previewOpen && <ExcelPreview load={api} key={`${assessment.id}:${assessment.current_version}`} url={`${endpoint}/assessment/${assessment.id}/${run?.processing_mode === "codex" ? `agent-runs/${encodeURIComponent(run.id)}/preview` : "preview"}`} onClose={() => setPreviewOpen(false)}/>}
-        <ClauseReview key={assessment.id} controls={controls} draft={draft} busy={busy} run={run} onReviewNote={reviewNote} onAnswer={(id, text) => { setAssessmentRun(null); setDraft(current => ({...current, [id]: {...(current[id] || {status:"unanswered"}), text}})); }}/>
+        <ClauseReview key={assessment.id} controls={controls} draft={draft} busy={busy} run={assessmentRun} runIsCurrent={Boolean(run)} savedAnswers={assessment.answers} onReviewNote={reviewNote} onAnswer={(id, text) => { setDraft(current => ({...current, [id]: {...(current[id] || {status:"unanswered"}), text}})); }}/>
       </section>
     </>}
   </section>;

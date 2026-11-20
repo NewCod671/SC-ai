@@ -1,6 +1,39 @@
 from .test_api import client, assessment
 
 
+def test_codex_note_review_repairs_unverified_topics_in_the_same_request(client, monkeypatch):
+    from app import codex_provider
+
+    value = assessment(client)
+    calls = []
+    note = 'IT manager approves access.'
+
+    class Provider:
+        name = 'fixture-codex'
+
+        def assess_control(self, case):
+            calls.append(case)
+            retry = len(calls) > 1
+            return {'coverage_topics': [
+                {'topic': 'Approval owner', 'status': 'covered',
+                 'quote': note if retry else 'Paraphrased: IT approves access',
+                 'source_control_id': 'SC-A', 'missing_detail': ''},
+                *([] if retry else [{'topic': 'Timing', 'status': 'missing',
+                                    'missing_detail': 'Approval time is not recorded.'}]),
+            ]}
+
+    monkeypatch.setattr(codex_provider, 'health', lambda: {'available': True})
+    monkeypatch.setattr(codex_provider, 'CodexProvider', Provider)
+    response = client.post('/api/assessments/' + value['id'] + '/review-note', json={
+        'expected_version': value['current_version'], 'control_id': 'SC-A',
+        'text': note, 'processing_mode': 'codex', 'authorize_external': True,
+    })
+    assert response.status_code == 200, response.text
+    assert calls[1]['context']['coverage_topics_to_recheck'] == ['Approval owner']
+    assert len(calls) == 2
+    assert [topic['status'] for topic in response.json()['question_coverage']] == ['covered', 'missing']
+
+
 def test_note_review_uses_unsaved_clause_note_and_never_changes_answers(client, monkeypatch):
     from app import ai
     value = assessment(client)

@@ -1,7 +1,8 @@
+import { toAuditNotes } from "./clause-answers.mjs";
 import React, { useState } from "react";
 import { ChevronLeft, ChevronRight, Search } from "lucide-react";
 
-export default function ClauseReview({ controls, draft, busy, run, onAnswer, onReviewNote }) {
+export default function ClauseReview({ controls, draft, busy, run, runIsCurrent, savedAnswers, onAnswer, onReviewNote }) {
   const [selected, setSelected] = useState("");
   const [reviews, setReviews] = useState({});
   const [error, setError] = useState("");
@@ -11,6 +12,8 @@ export default function ClauseReview({ controls, draft, busy, run, onAnswer, onR
   const note = draft[control?.id]?.text || "";
   const review = reviews[control?.id]?.note === note ? reviews[control.id].result : null;
   const finding = run?.results?.find(item => item.control_id === control?.id);
+  const savedNote = control ? toAuditNotes({ [control.id]: savedAnswers?.[control.id] || {} })[control.id].text : "";
+  const historical = finding && (!runIsCurrent || note !== savedNote);
   const grade = { comply: "C", ofi: "OFI", nc_minor: "NC-Minor", nc_major: "NC-Major", needs_review: "Needs review", not_applicable: "N/A" }[finding?.audit?.category] || finding?.status || "Not assessed";
   function select(id) { setSelected(id); setError(""); }
   async function check() {
@@ -40,7 +43,7 @@ export default function ClauseReview({ controls, draft, busy, run, onAnswer, onR
         </button>)}
       </nav>}
     {!control ? <p>No controls match your search.</p> : <article className="clause-detail">
-      <header className="clause-title"><div><small>CLAUSE / CONTROL {control.id}</small><h3>{control.requirement.split("\n")[0]}</h3></div><span className="clause-grade">{grade}</span></header>
+      <header className="clause-title"><div><small>CLAUSE / CONTROL {control.id}</small><h3>{control.requirement.split("\n")[0]}</h3></div><span className="clause-grade">{historical ? `Previous: ${grade}` : grade}</span></header>
       <details className="clause-requirement"><summary>Standard reference</summary><p>{control.requirement}</p></details>
       <label className="audit-field clause-note-field">Audit note<textarea aria-label={`Audit note for ${control.id}`} rows={12} maxLength={20000} disabled={busy} value={note} onChange={event => onAnswer(control.id, event.target.value)} placeholder="Record short interview notes, observations, document references and any known gaps for this clause."/></label>
       <div className="note-review-actions"><button className="secondary-button" disabled={busy || !note.trim()} onClick={check}><Search size={16}/>{busy ? "Working…" : "Check with AI"}</button><span>{note.length.toLocaleString()} / 20,000 characters</span></div>
@@ -48,7 +51,7 @@ export default function ClauseReview({ controls, draft, busy, run, onAnswer, onR
       {checking && <p role="status">Waiting for the AI review…</p>}
       {error && <p role="alert" className="notice">{error}</p>}
       {review && <MissingInformation review={review}/>} 
-      {finding && <div className="compliance-finding">{finding.rationale || "No assessment result yet"}</div>}
+      {finding && <div className="compliance-finding">{historical && <p>Previous assessment · Version {run.revision}. Run Assess notes for an updated grade.</p>}{finding.rationale?.replace(/^[ \t]*document reference[ \t]*:[ \t]*/gim, "") || "No assessment rationale available."}</div>}
       <nav className="clause-bottom-navigation" aria-label="Navigate between clauses">{previous}<span>{index + 1} / {controls.length}</span>{next}</nav>
     </article>}
     </div>
@@ -58,10 +61,13 @@ export default function ClauseReview({ controls, draft, busy, run, onAnswer, onR
 
 function MissingInformation({ review }) {
   const topics = review.question_coverage || [];
-  const missing = topics.filter(topic => topic.status !== "covered");
+  const missing = topics.filter(topic => ["missing", "partial"].includes(topic.status));
+  const unverified = topics.some(topic => topic.status === "unverified");
   return <section className="note-coverage-review" aria-label="Missing information">
     {!topics.length ? <p role="status">Coverage details unavailable.</p>
-      : !missing.length ? <p className="note-no-follow-up">No missing information identified.</p>
+      : !missing.length ? (unverified
+        ? <p role="status">Some AI references could not be verified. Check again to confirm coverage.</p>
+        : <p className="note-no-follow-up">No missing information identified.</p>)
       : <><h4 className="note-follow-up-needed">Missing information</h4>
         <ul>{missing.map((item, index) => <li className="note-follow-up-needed" key={index}>
           <strong>{item.topic || item.question}</strong>{item.missing_detail && <p>{item.missing_detail}</p>}
