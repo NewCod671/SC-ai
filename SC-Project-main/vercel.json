@@ -6,7 +6,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://units-productivity-potato-consequence.trycloudflare.com/api/:path*"
+      "destination": "https://lift-nextel-translation-tampa.trycloudflare.com/api/:path*"
     }
   ]
 }

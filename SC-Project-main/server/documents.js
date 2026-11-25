@@ -961,7 +961,7 @@ function createMarkdownDocx(markdown, title, project) {
     new Paragraph({ text: title, heading: HeadingLevel.TITLE }),
     new Paragraph({ children: [new TextRun({ text: "DRAFT - Internal review required", bold: true, color: "9A5B00" })] }),
     new Paragraph({ text: `Project: ${project.name} (${project.id})` }),
-    new Paragraph({ text: `Client: ${project.client}` })
+    ...(project.client ? [new Paragraph({ text: `Client: ${project.client}` })] : [])
   ];
   let tableHeaderAdded = false;
   for (const row of parseMarkdownDocument(markdown)) {
@@ -975,7 +975,12 @@ function createMarkdownDocx(markdown, title, project) {
       if (/^\s*[-:| ]+\s*$/.test(label)) continue;
       children.push(new Paragraph({ text: `${tableHeaderAdded ? "" : "Table row: "}${label}`, indent: { left: 240 } }));
       tableHeaderAdded = true;
-    } else children.push(new Paragraph({ text: row.text }));
+    } else {
+      const parts = row.text.split(/(\[TO BE CONFIRMED\])/);
+      children.push(new Paragraph({ children: parts.filter(Boolean).map(text => new TextRun(
+        text === "[TO BE CONFIRMED]" ? { text, highlight: "yellow" } : { text }
+      )) }));
+    }
   }
   children.push(new Paragraph({ text: "Review all project facts against the approved source records before issue." }));
   return Packer.toBuffer(new Document({ creator: "SC Control Center", title, sections: [{ children }] }));

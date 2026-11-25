@@ -14,7 +14,9 @@ def load():
     return value,{'version':value['version'],'sha256':sha256(raw).hexdigest()}
 
 
-def examples(control, knowledge=None):
+def examples(control, knowledge=None, *, enabled=True):
+    if not enabled:
+        return []
     knowledge=knowledge if knowledge is not None else load()[0]
     return [dict(case,synthetic=True) for group in knowledge['groups']
         if control['id'] in group['control_ids'] for case in group['cases']][:3]

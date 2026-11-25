@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy import select,func
 from app import main,ai,agent_mode,codex_provider,assessment_jobs as jobs
 from app.models import AgentRun,AuditorFeedback,Evidence,Run,Revision,Assessment
-from app.schemas import RunInput,ReplaceAnswers,ProcessingModeInput,FeedbackInput,FeedbackReviewInput,DeleteAssessmentInput
+from app.schemas import RunInput,ReplaceAnswers,ProcessingModeInput,FeedbackInput,FeedbackReviewInput,DeleteAssessmentInput,NoteReviewInput
 from .test_standard_skills import db,standard,assessment
 from app.codex_context_mcp import dispatch
 
@@ -89,6 +89,60 @@ def test_verified_classifications_and_exact_id_validation(db,monkeypatch,categor
     with pytest.raises(ValueError):codex_provider.validate_result({'finding':bad},case)
     with_archive_id=deepcopy(output);with_archive_id['evidence_ids']=['OTHER-CLIENT']
     assert codex_provider.validate_result({'finding':with_archive_id},case)['evidence_ids']==[]
+
+
+def test_saved_note_review_runs_again_even_with_a_completed_assessment(db, monkeypatch):
+    s,a,calls=fixture(db,monkeypatch,evidence=False)
+    original=codex_provider.CodexProvider
+    complete=False
+
+    class Provider(original):
+        def assess_control(self, case):
+            if case.get('note_review_instruction'):
+                super().assess_control(case)
+                if complete:
+                    return {'coverage_topics':[{'topic':'Check owner','status':'covered',
+                                               'quote':case['answer']['text'],'source_control_id':case['control_id'],
+                                               'missing_detail':''}]}
+                return {'coverage_topics':[{'topic':'Draft detail','status':'missing',
+                                           'missing_detail':'The note does not identify who performs the check.'}]}
+            return super().assess_control(case)
+
+    monkeypatch.setattr(codex_provider,'CodexProvider',Provider)
+    main.set_processing_mode(a['id'],ProcessingModeInput(mode='codex',expected_version=2),db)
+    run=main.run_assessment(a['id'],RunInput(authorize_external=True),db)
+    cid=s.controls[0]['id']
+    assert run['results'][0]['audit']['category']=='comply'
+    note=a['answers'][cid]['text']
+    body=NoteReviewInput(expected_version=2,control_id=cid,text=note,
+                         processing_mode='codex',authorize_external=True)
+    calls.clear()
+    for _ in range(2):
+        result=main.review_clause_note(a['id'],body,db)
+        assert result['requires_review'] is True
+        assert result['missing_details']=='The note does not identify who performs the check.'
+        assert result['question_coverage'][0]['status']=='missing'
+    assert len(calls)==2
+    assert all(call['answer']['text']==note and call.get('note_review_instruction') for call in calls)
+    assert main.runs(a['id'],db)[-1]['results']==run['results']
+    reassessed=main.run_assessment(a['id'],RunInput(authorize_external=True),db)
+    assert reassessed['results'][0]['audit']['category']=='comply'
+    assert set(reassessed['analysis_plan']['reused_control_ids'])=={control['id'] for control in s.controls}
+    complete=True
+    assert main.review_clause_note(a['id'],body,db)['requires_review'] is False
+    cleared=main.run_assessment(a['id'],RunInput(authorize_external=True),db)
+    assert cleared['results'][0]['audit']['category']=='comply'
+
+    complete=False
+    draft='Changed note with an unresolved detail'
+    main.review_clause_note(a['id'],body.model_copy(update={'text':draft}),db)
+    still_saved=main.run_assessment(a['id'],RunInput(authorize_external=True),db)
+    assert still_saved['results'][0]['audit']['category']=='comply'
+    answers=deepcopy(a['answers'])
+    answers[cid]['text']=draft
+    main.save_answers(a['id'],ReplaceAnswers(expected_version=2,answers=answers),db)
+    saved_draft=main.run_assessment(a['id'],RunInput(authorize_external=True),db)
+    assert saved_draft['results'][0]['audit']['category']=='comply'
 
 
 def test_pending_feedback_not_retrieved_approved_feedback_is_scoped(db,monkeypatch):
@@ -298,10 +352,38 @@ def test_batch_sizing_respects_count_and_context_budget_without_truncation(monke
     with pytest.raises(HTTPException):agent_mode.batch_limits()
 
 
+def test_codex_runs_two_batches_concurrently_and_saves_in_checklist_order(db,monkeypatch):
+    from threading import Barrier, Event
+
+    s,a,_=fixture(db,monkeypatch)
+    Original,_=batch_provider(monkeypatch)
+    ids=[c['id'] for c in s.controls]
+    both_running=Barrier(2)
+    second_done=Event()
+    class Concurrent(Original):
+        def assess_controls(self,cases):
+            both_running.wait(timeout=5)
+            rows=super().assess_controls(cases)
+            if cases[0]['control_id']==ids[0]:
+                assert second_done.wait(timeout=5)
+            else:
+                second_done.set()
+            return rows
+
+    monkeypatch.setattr(codex_provider,'CodexProvider',Concurrent)
+    monkeypatch.setenv('CODEX_BATCH_SIZE','1')
+    monkeypatch.setenv('CODEX_BATCH_WORKERS','2')
+    main.set_processing_mode(a['id'],ProcessingModeInput(mode='codex',expected_version=2),db)
+    result=main.run_assessment(a['id'],RunInput(authorize_external=True),db)
+    assert result['analysis_plan']['ai_control_ids']==ids
+    assert result['usage']['requests']==2 and result['usage']['total_tokens']==300
+
+
 def test_batch_cancellation_preserves_previous_batch_and_resume_only_remaining(db,monkeypatch):
     s,a,_=fixture(db,monkeypatch)
     Original,calls=batch_provider(monkeypatch)
     monkeypatch.setenv('CODEX_BATCH_SIZE','1')
+    monkeypatch.setenv('CODEX_BATCH_WORKERS','1')
     job=jobs.reserve(a['id'])
     class Stopping(Original):
         def assess_controls(self,cases):

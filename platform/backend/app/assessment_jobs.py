@@ -37,13 +37,18 @@ def _dispatch(callback):
     Thread(target=callback, daemon=True, name='inference-stop').start()
 
 
-def cancel(key):
+def scoped_job(key, assessment_id):
+    job = _jobs.get(str(key))
+    if job is None or (assessment_id is not None and job['assessment_id'] != str(assessment_id)):
+        raise HTTPException(404, 'Assessment run job not found')
+    return job
+
+
+def cancel(key, assessment_id=None):
     callbacks = []
     with _lock:
-        job = _jobs.get(str(key))
-        if job is None:
-            raise HTTPException(404, 'Assessment run job not found')
-        if job['status'] in {'pending', 'running'}:
+        job = scoped_job(key, assessment_id)
+        if job['status'] in {'pending', 'queued', 'running'}:
             job.update(status='cancelled', updated=monotonic())
             job['event'].set()
             callbacks = list(job['stops'].values())
@@ -83,12 +88,24 @@ def remote_stop(callback):
             job['stops'].pop(token, None)
 
 
-def snapshot(key):
+def snapshot(key, assessment_id=None):
     with _lock:
-        job = _jobs.get(str(key))
-        if job is None:
-            raise HTTPException(404, 'Assessment run job not found')
-        return {'id': str(key), 'status': job['status'], **job['progress']}
+        job = scoped_job(key, assessment_id)
+        result = {'id': str(key), 'status': job['status'], **job['progress']}
+        if job.get('error'):
+            result['error'] = job['error']
+        return result
+
+
+def enqueue(key, assessment_id):
+    with _lock:
+        job = scoped_job(key, assessment_id)
+        if job['status'] != 'pending' or any(
+            other['assessment_id'] == str(assessment_id) and other['status'] in {'queued', 'running'}
+            for other in _jobs.values()
+        ):
+            raise HTTPException(409, 'An assessment is already running or this job has already been used')
+        job.update(status='queued', updated=monotonic())
 
 
 def publish(*, phase=None, total=None, completed_ids=(), validated_ids=(), failed_ids=()):
@@ -119,7 +136,7 @@ def check_cancelled():
 
 
 @contextmanager
-def generation(key, assessment_id):
+def generation(key, assessment_id, *, queued=False):
     if key is None:
         yield
         return
@@ -130,16 +147,21 @@ def generation(key, assessment_id):
             raise HTTPException(404, 'Assessment run job not found; create a new job')
         if job['assessment_id'] != str(assessment_id):
             raise HTTPException(409, 'Assessment job belongs to another assessment')
-        if any(other is not job and other['assessment_id'] == str(assessment_id) and other['status'] == 'running' for other in _jobs.values()):
+        if any(other is not job and other['assessment_id'] == str(assessment_id) and other['status'] in {'queued','running'} for other in _jobs.values()):
             raise HTTPException(409, 'An assessment is already running')
         if job['status'] == 'cancelled':
             raise AssessmentCancelled('หยุดประเมินแล้ว เก็บข้อที่ตรวจสำเร็จไว้สำหรับรันต่อ คำตอบและผลเดิมยังอยู่')
-        if job['status'] != 'pending':
+        if job['status'] != ('queued' if queued else 'pending'):
             raise HTTPException(409, 'Assessment run job has already been used')
         job.update(status='running', updated=monotonic())
     token = _current.set(key)
     try:
         yield
+    except HTTPException as exc:
+        with _lock:
+            if isinstance(exc.detail, str):
+                job['error'] = exc.detail
+        raise
     finally:
         _current.reset(token)
         with _lock:

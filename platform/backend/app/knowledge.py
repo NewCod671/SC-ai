@@ -35,7 +35,7 @@ def knowledge_reference(skill):
 def load_knowledge(reference):
     try:
         if (not isinstance(reference, dict)
-                or not re.fullmatch(r'iso27001-2022-[a-f0-9]{16}', reference.get('id', ''))
+                or not re.fullmatch(r'[a-z0-9][a-z0-9-]{1,40}-[a-f0-9]{16}', reference.get('id', ''))
                 or not re.fullmatch(r'[a-f0-9]{64}', reference.get('sha256', ''))
                 or not re.fullmatch(r'[a-f0-9]{64}', reference.get('source_sha256', ''))):
             raise ValueError('Invalid reference')
@@ -93,6 +93,19 @@ def prepare_iso27001_knowledge(controls, *, questions=False):
     synthetic_skill = {'instructions': json.dumps({
         'format': 'compliance-review-skill/v1',
         'knowledge_ref': ISO27001_2022_REF,
+    })}
+    return prepare_knowledge(synthetic_skill, controls, questions=questions)
+
+
+def prepare_for_standard(standard, controls, *, questions=False):
+    from . import standard_profiles
+
+    profile = standard_profiles.resolve(standard)
+    if profile.knowledge_ref is None:
+        return None
+    synthetic_skill = {'instructions': json.dumps({
+        'format': 'compliance-review-skill/v1',
+        'knowledge_ref': profile.knowledge_ref,
     })}
     return prepare_knowledge(synthetic_skill, controls, questions=questions)
 

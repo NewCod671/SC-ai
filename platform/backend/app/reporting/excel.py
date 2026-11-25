@@ -171,6 +171,24 @@ def white_cell_fills(parts, root, refs, unlock=False):
     """Give selected output cells an explicit white fill, preserving other styles."""
     if not refs:
         return
+    if 'xl/styles.xml' not in parts:
+        from openpyxl import Workbook
+        defaults = BytesIO()
+        Workbook().save(defaults)
+        with ZipFile(defaults) as archive:
+            parts['xl/styles.xml'] = archive.read('xl/styles.xml')
+        rels_path = 'xl/_rels/workbook.xml.rels'
+        rels = xml(parts[rels_path])
+        rid = 'rComplianceStyles'
+        while any(rel.get('Id') == rid for rel in rels):
+            rid += 'x'
+        ET.SubElement(rels, f'{{{REL}}}Relationship', Id=rid, Type=DOCREL+'/styles', Target='styles.xml')
+        parts[rels_path] = ET.tostring(rels, encoding='utf-8', xml_declaration=True)
+        types_path = '[Content_Types].xml'
+        types = xml(parts[types_path])
+        ET.SubElement(types, f'{{{CT}}}Override', PartName='/xl/styles.xml',
+                      ContentType='application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml')
+        parts[types_path] = ET.tostring(types, encoding='utf-8', xml_declaration=True)
     styles=xml(parts['xl/styles.xml'])
     xfs=styles.find(f'{{{NS}}}cellXfs')
     fills=styles.find(f'{{{NS}}}fills')

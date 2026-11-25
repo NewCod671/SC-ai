@@ -13,6 +13,8 @@ def fingerprints(payload,provider):
     return {c['id']:digest({'version':VERSION,'provider':provider,'prompt_profile':os.getenv('AI_ASSESS_PROMPT_PROFILE','compact-v1'),'audit_version':assessment_policy.SC_GRADING_VERSION if assessment_policy.answer_based(payload) else AUDIT_VERSION,'assessment_basis':payload.get('assessment_basis',assessment_policy.DEFAULT),
         'control':{k:c.get(k) for k in ('id','requirement')},
         'grading_examples':c.get('grading_examples',[]),
+        'standard_guidance':c.get('standard_guidance',''),
+        'standard':payload.get('standard'),
         'prompt_compaction_version':PROMPT_COMPACTION_VERSION if assessment_policy.answer_based(payload) else None,
         'agent_skill_hashes':{name:item.get('sha256') for name,item in payload.get('codex_agent_skills',{}).items()},
         'answer':payload['answers'].get(c['id'],{}),'context':public_context(payload.get('context',{})),

@@ -21,11 +21,12 @@ def compact_batch(payload, controls):
     from . import assessment_policy
     payload=assessment_policy.prepare(payload)
     ids = {c['id'] for c in controls}
-    batch = {'controls': [{k: c[k] for k in ('id', 'requirement', 'department', 'assessment_questions', 'grading_examples') if k in c} for c in controls],
+    batch = {'controls': [{k: c[k] for k in ('id', 'requirement', 'department', 'assessment_questions', 'grading_examples', 'standard_guidance') if k in c} for c in controls],
              'context': payload.get('context', {}),
              'answers': {c['id']: payload['answers'][c['id']] for c in controls},
              'evidence': [{k: e[k] for k in ('id', 'control_id', 'filename', 'text') if k in e}
                           for e in payload.get('evidence', []) if e['control_id'] in ids]}
+    if payload.get('standard') is not None:batch['standard']=payload['standard']
     if payload.get('assessment_basis'):batch['assessment_basis']=payload['assessment_basis']
     if payload.get('note_review_mode') is True:batch['note_review_mode']=True
     batch['allowed_evidence_ids'] = {c['id']: [e['id'] for e in batch['evidence'] if e['control_id'] == c['id']]

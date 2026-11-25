@@ -304,3 +304,8 @@ def test_dedicated_profile_cannot_point_at_the_chat_profile(monkeypatch,tmp_path
     monkeypatch.setenv('CODEX_AGENT_HOME',str(desktop))
     with pytest.raises(codex_provider.CodexError) as error:codex_provider.clean_environment()
     assert error.value.code=='codex_account_home_not_isolated'
+def test_cli_failure_reads_usage_limit_from_json_events(tmp_path):
+    events = tmp_path / 'events.jsonl'
+    events.write_bytes(b'{"type":"turn.failed","error":{"message":"You hit your usage limit"}}\n')
+    assert codex_provider.cli_failure('', events) == 'codex_usage_limit'
+

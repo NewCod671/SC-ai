@@ -18,7 +18,7 @@ npm install
 npm run dev
 ```
 
-Open http://127.0.0.1:5173.
+Open http://127.0.0.1:5180 when using the SC AI workspace configuration. See the workspace README for starting the assessment API and web server together on Windows.
 
 ## Sign in
 The first administrator account has been provisioned directly in the local SQLite database. Use the credentials provided to the project owner. Login is sign-in-only; account setup is not exposed in the UI.
@@ -37,7 +37,7 @@ SQLite is stored at data/sc-control-center.sqlite. It contains users, sessions, 
 
 ## Security notes
 This is a local development build, not yet approved for production client information.
-- The server binds to 127.0.0.1, so it is reachable only from this Mac.
+- The local server binds to 127.0.0.1, so it is reachable from the same computer.
 - Company Wi-Fi/LAN-only access requires IT to provision an approved host, firewall rules, HTTPS/TLS, backups and monitoring. Do not change the bind address to 0.0.0.0 on a personal machine as a shortcut.
 - Production deployment must use HTTPS and set NODE_ENV=production. The production cookie is marked Secure.
 - Review company password, account lifecycle, role, retention, encryption-at-rest and incident-response requirements before onboarding users.

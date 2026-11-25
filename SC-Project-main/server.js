@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes, createHash } from "node:crypto";
 import fs from "node:fs";
+import { buildChecklistAuditReport } from "./server/audit-report.js";
 import {
   createProjectDocumentMarkdown,
   exportMarkdownProjectDocument,
@@ -777,9 +778,52 @@ app.patch("/api/audit/findings/:findingId", requireAuth, requireWorkflowPage("Au
   const updated = db.prepare("SELECT id,control_ref,classification,department,title,evidence,evidence_source,impact,recommendation,owner,due_date,status,created_by,updated_by,created_at,updated_at FROM audit_findings WHERE id=?").get(findingId);
   res.json({ finding: updated });
 });
+async function generateChecklistAuditReport(req, res) {
+  const project = req.auditProject;
+  const link = db.prepare("SELECT assessment_id FROM project_assessments WHERE project_id=?").get(project.id);
+  if (!link) return res.status(409).json({error:"Create an Audit Checklist for this project before generating its report."});
+  const base = (process.env.COMPLIANCE_API_URL || "http://127.0.0.1:8001").replace(/\/+$/, "");
+  const headers = process.env.COMPLIANCE_API_KEY ? {Authorization: `Bearer ${process.env.COMPLIANCE_API_KEY}`} : {};
+  const resource = `${base}/api/assessments/${encodeURIComponent(link.assessment_id)}`;
+  const signal = AbortSignal.timeout(30000);
+  let assessment, runs;
+  try {
+    const responses = await Promise.all([fetch(resource, {headers, signal}), fetch(`${resource}/runs`, {headers, signal})]);
+    if (responses.some(response => response.status === 404)) {
+      return res.status(409).json({error:"The linked Audit Checklist is unavailable. Check the project checklist and try again."});
+    }
+    if (responses.some(response => !response.ok)) throw new Error("Checklist API error");
+    [assessment, runs] = await Promise.all(responses.map(response => response.json()));
+  } catch {
+    return res.status(502).json({error:"Could not read the linked Audit Checklist. Check the assessment service and try again."});
+  }
+  const sourceTypes = [
+    ["audit_plan", "Audit Checklist"], ["kickoff", "Kick-off"], ["proposal", "Proposal"]
+  ];
+  const sourceDocuments = sourceTypes.flatMap(([type, page]) => {
+    if (!userHasPermission(req.user, `page:${page}`)) return [];
+    const imported = db.prepare(`SELECT title, extracted_text AS text FROM project_documents
+      WHERE project_id=? AND document_type=? AND origin='imported' AND TRIM(extracted_text)<>''
+      ORDER BY id DESC LIMIT 1`).get(project.id, type);
+    const planning = db.prepare(`SELECT title, content_markdown AS text FROM planning_documents
+      WHERE project_id=? AND document_type=? AND review_status IN ('Reviewed','Issued')
+      ORDER BY CASE review_status WHEN 'Issued' THEN 0 ELSE 1 END, id DESC LIMIT 1`).get(project.id, type);
+    return [planning, imported].filter(Boolean).map(doc => ({ ...doc, type }));
+  });
+  const {title, content} = buildChecklistAuditReport(project, assessment, runs, sourceDocuments);
+  const saved = db.prepare("INSERT INTO audit_documents (project_id,document_type,title,content_markdown,model,created_by) VALUES (?,?,?,?,?,?)")
+    .run(project.id,"audit_report",title,content,"checklist-template",req.user.id);
+  logAction(req.user.id,"GENERATE_AUDIT_DOCUMENT","audit_document",String(saved.lastInsertRowid));
+  const document = db.prepare("SELECT id,document_type,title,content_markdown,model,review_status,created_by,reviewed_by,reviewed_at,created_at FROM audit_documents WHERE id=?")
+    .get(saved.lastInsertRowid);
+  res.setHeader("Cache-Control","private, no-store");
+  return res.status(201).json({document});
+}
+
 app.post("/api/audit/projects/:projectId/documents", requireAuth, requireWorkflowPage("Audit Report"), requireAuditProject, auditDraftLimiter, async (req, res) => {
   const documentType = cleanAuditField(req.body.documentType, 40);
   if (!new Set(["audit_report", "close_summary", "car_register"]).has(documentType)) return res.status(400).json({ error: "Choose an available audit document type." });
+  if (documentType === "audit_report") return generateChecklistAuditReport(req, res);
   if (req.body.confirmAiProcessing !== true) return res.status(400).json({ error: "Confirm that this project data is approved for processing by the configured AI provider." });
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return res.status(503).json({ error: "AI is not configured yet. Add OPENAI_API_KEY to the server-side .env file, then restart SC Control Center." });
@@ -791,7 +835,7 @@ app.post("/api/audit/projects/:projectId/documents", requireAuth, requireWorkflo
     total: findings.length,
     byClassification: Object.fromEntries([...auditFindingClasses].map(classification => [classification,findings.filter(f=>f.classification===classification).length]))
   };
-  const typeLabels = { audit_report: "Internal Audit Report Draft", close_summary: "Closing Meeting Summary Draft", car_register: "Corrective Action Request Drafts" };
+  const typeLabels = { close_summary: "Closing Meeting Summary Draft", car_register: "Corrective Action Request Drafts" };
   const instructions = [
     "You draft internal security compliance deliverables from approved project facts and auditor-confirmed findings.",
     "Use only the supplied project brief and finding records. Never invent client facts, audit activities, evidence, root causes, action owners, dates, or outcomes.",
@@ -799,8 +843,7 @@ app.post("/api/audit/projects/:projectId/documents", requireAuth, requireWorkflo
     "Preserve each finding ID, control reference, and classification exactly. Keep evidence separate from impact and recommendation.",
     "Use the supplied finding count and classification totals as the source for the summary; do not silently omit or merge findings.",
     "Mark missing information as [TO BE CONFIRMED]. If evidence does not support a conclusion, say so plainly.",
-    documentType === "audit_report" ? "Create a concise report with objective, scope, criteria, approach, results summary, one section per finding, conclusion, and reviewer checklist." :
-      documentType === "close_summary" ? "Create a closing meeting summary with engagement details, verified results, key findings, open decisions, next steps, owners and dates only where provided." :
+    documentType === "close_summary" ? "Create a closing meeting summary with engagement details, verified results, key findings, open decisions, next steps, owners and dates only where provided." :
       "Create a CAR draft for each finding. Include the control reference, classification, finding description, evidence source, impact, and recommendation. Leave root cause, correction, corrective action, responsible person and due date marked [TO BE COMPLETED] unless the supplied record contains them.",
     "Label the entire output as an AI-generated draft requiring auditor review."
   ].join("\n");
@@ -852,12 +895,13 @@ app.patch("/api/audit/documents/:documentId", requireAuth, requireWorkflowPage("
 const auditExportFormats = {audit_report:"docx",close_summary:"pptx",car_register:"xlsx"};
 app.get("/api/audit/documents/:documentId/export/:format", requireAuth, requireWorkflowPage("Audit Report"), async (req,res) => {
   const id=Number(req.params.documentId);if(!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:"Invalid document ID."});
-  const document=db.prepare("SELECT id,project_id,document_type,title,content_markdown FROM audit_documents WHERE id=?").get(id);if(!document)return res.status(404).json({error:"Generated document not found."});
+  const document=db.prepare("SELECT id,project_id,document_type,title,content_markdown,model FROM audit_documents WHERE id=?").get(id);if(!document)return res.status(404).json({error:"Generated document not found."});
   const project=db.prepare("SELECT id,name,client,stage,status,progress FROM projects WHERE id=?").get(document.project_id);if(!project)return res.status(404).json({error:"Project not found."});
   if(!canAccessProject(req.user,project.id))return res.status(403).json({error:"You do not have access to this project."});
   const format=cleanAuditField(req.params.format,10).toLowerCase();if(auditExportFormats[document.document_type]!==format)return res.status(400).json({error:`Export this draft as ${(auditExportFormats[document.document_type]||"").toUpperCase()}.`});
   try{
-    const output=await exportMarkdownProjectDocument(document.content_markdown,document.title,project,format);
+    const exportProject = document.model === "checklist-template" ? {id:project.id,name:project.name} : project;
+    const output=await exportMarkdownProjectDocument(document.content_markdown,document.title,exportProject,format);
     logAction(req.user.id,"EXPORT_AUDIT_DOCUMENT","audit_document",String(id));
     res.setHeader("Cache-Control","private, no-store");res.setHeader("Content-Type",output.mimeType);res.setHeader("X-Content-Type-Options","nosniff");res.setHeader("Content-Disposition",`attachment; filename="${safeDownloadName(`${project.id}-${document.document_type}-${document.id}`)}.${output.extension}"`);res.end(output.buffer);
   }catch{return res.status(500).json({error:"Could not create the requested Office document."});}
@@ -1766,7 +1810,7 @@ app.post("/api/compliance/projects/:projectId/assessment", requireAuth, requireC
 });
 function linkedAssessment(req,res,next) {
   const link=db.prepare("SELECT assessment_id FROM project_assessments WHERE project_id=?").get(req.complianceProject.id);
-  if(!link||link.assessment_id!==req.params.assessmentId)return res.status(404).json({error:"No assessment is linked to this project."});
+  if(!link||(req.params.assessmentId && link.assessment_id!==req.params.assessmentId))return res.status(404).json({error:"No assessment is linked to this project."});
   req.linkedAssessmentId=link.assessment_id;next();
 }
 app.post("/api/compliance/projects/:projectId/assessment/:assessmentId/review-note",requireAuth,requireCompliancePage,requireComplianceProject,linkedAssessment,(req,res)=>callComplianceApi(req,res,`/api/assessments/${encodeURIComponent(req.linkedAssessmentId)}/review-note`,{timeoutMs:900000}));
@@ -1782,9 +1826,18 @@ app.post("/api/compliance/projects/:projectId/assessment/:assessmentId/questions
 app.post("/api/compliance/projects/:projectId/assessment/:assessmentId/questions",requireAuth,requireCompliancePage,requireComplianceProject,linkedAssessment,(req,res)=>callComplianceApi(req,res,`/api/assessments/${encodeURIComponent(req.linkedAssessmentId)}/questions`));
 app.post("/api/compliance/projects/:projectId/assessment/:assessmentId/run-jobs",requireAuth,requireCompliancePage,requireComplianceProject,linkedAssessment,(req,res)=>callComplianceApi(req,res,`/api/assessments/${encodeURIComponent(req.linkedAssessmentId)}/run-jobs`));
 app.put("/api/compliance/projects/:projectId/assessment/:assessmentId/processing-mode",requireAuth,requireCompliancePage,requireComplianceProject,linkedAssessment,(req,res)=>callComplianceApi(req,res,`/api/assessments/${encodeURIComponent(req.linkedAssessmentId)}/processing-mode`));
-app.post("/api/compliance/projects/:projectId/assessment/:assessmentId/runs",requireAuth,requireCompliancePage,requireComplianceProject,linkedAssessment,(req,res)=>callComplianceApi(req,res,`/api/assessments/${encodeURIComponent(req.linkedAssessmentId)}/runs`,{timeoutMs:900000}));
-app.get("/api/compliance/projects/:projectId/jobs/:jobId",requireAuth,requireCompliancePage,requireComplianceProject,(req,res)=>callComplianceApi(req,res,`/api/assessment-run-jobs/${encodeURIComponent(req.params.jobId)}`));
-app.post("/api/compliance/projects/:projectId/jobs/:jobId/cancel",requireAuth,requireCompliancePage,requireComplianceProject,(req,res)=>callComplianceApi(req,res,`/api/assessment-run-jobs/${encodeURIComponent(req.params.jobId)}/cancel`));
+app.post("/api/compliance/projects/:projectId/assessment/:assessmentId/runs",requireAuth,requireCompliancePage,requireComplianceProject,linkedAssessment,(req,res)=>{
+  res.once("finish",()=>{
+    if(res.statusCode===202) logAction(req.user.id,"START_ASSESSMENT_AI","assessment_job",req.body.job_id);
+  });
+  return callComplianceApi(req,res,`/api/assessments/${encodeURIComponent(req.linkedAssessmentId)}/runs/start`);
+});
+function assessmentJobPath(req, action = "") {
+  const query = new URLSearchParams({ assessment_id: req.linkedAssessmentId });
+  return `/api/assessment-run-jobs/${encodeURIComponent(req.params.jobId)}${action}?${query}`;
+}
+app.get("/api/compliance/projects/:projectId/jobs/:jobId",requireAuth,requireCompliancePage,requireComplianceProject,linkedAssessment,(req,res)=>callComplianceApi(req,res,assessmentJobPath(req)));
+app.post("/api/compliance/projects/:projectId/jobs/:jobId/cancel",requireAuth,requireCompliancePage,requireComplianceProject,linkedAssessment,(req,res)=>callComplianceApi(req,res,assessmentJobPath(req,"/cancel")));
 app.get("/api/compliance/projects/:projectId/assessment/:assessmentId/export",requireAuth,requireCompliancePage,requireComplianceProject,linkedAssessment,(req,res)=>callComplianceApi(req,res,`/api/assessments/${encodeURIComponent(req.linkedAssessmentId)}/export`));
 app.post("/api/projects", requireAuth, (req, res) => {
   if (!userHasPermission(req.user,"projects:create")) return res.status(403).json({error:"Your role is not allowed to create projects."});

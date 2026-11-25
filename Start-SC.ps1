@@ -20,14 +20,34 @@ foreach ($port in @(8001,5180)) {
 New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
 $backend = Start-Process -FilePath $PythonExe -ArgumentList @('-m','uvicorn','app.main:app','--app-dir','backend','--host','127.0.0.1','--port','8001') -WorkingDirectory $platformRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logRoot 'backend.log') -RedirectStandardError (Join-Path $logRoot 'backend-error.log') -PassThru
 try {
-    $web = Start-Process -FilePath (Get-Command node).Source -ArgumentList 'server.js' -WorkingDirectory $webRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logRoot 'web.log') -RedirectStandardError (Join-Path $logRoot 'web-error.log') -PassThru
-    Start-Sleep -Seconds 2
-    if ($backend.HasExited -or $web.HasExited) { throw 'A service could not start. Check the logs in .runtime.' }
+    $node = (Get-Command node).Source
+    $key = & $node "--env-file=$(Join-Path $webRoot '.env')" -p 'process.env.COMPLIANCE_API_KEY || String()'
+    if ($LASTEXITCODE -ne 0) { throw 'Could not read the web configuration.' }
+    $headers = @{}
+    if ($key) { $headers.Authorization = "Bearer $key" }
+    $web = Start-Process -FilePath $node -ArgumentList 'server.js' -WorkingDirectory $webRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logRoot 'web.log') -RedirectStandardError (Join-Path $logRoot 'web-error.log') -PassThru
+    $ready = $false
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    while (-not $ready -and [DateTime]::UtcNow -lt $deadline) {
+        if ($backend.HasExited -or $web.HasExited) { break }
+        try {
+            $apiHealth = Invoke-RestMethod 'http://127.0.0.1:8001/api/health' -Headers $headers -TimeoutSec 2
+            $webHealth = Invoke-RestMethod 'http://127.0.0.1:5180/api/health' -TimeoutSec 2
+            $ready = $apiHealth.status -eq 'ok' -and $webHealth.ok -eq $true
+        } catch {
+            Start-Sleep -Milliseconds 500
+        }
+    }
+    if (-not $ready) { throw 'The SC web or assessment API did not pass its health check.' }
     @{ backend = $backend.Id; web = $web.Id } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $logRoot 'services.json')
     Write-Output 'SC web: http://127.0.0.1:5180'
     Write-Output "Logs: $logRoot"
 } catch {
-    if (-not $backend.HasExited) { Stop-Process -Id $backend.Id }
+    if (-not $backend.HasExited) { & taskkill.exe /PID $backend.Id /T /F | Out-Null }
     if ($web -and -not $web.HasExited) { Stop-Process -Id $web.Id }
+    foreach ($log in @('backend-error.log', 'web-error.log')) {
+        Write-Host $log
+        Get-Content -LiteralPath (Join-Path $logRoot $log) -Tail 10 -ErrorAction SilentlyContinue
+    }
     throw
 }

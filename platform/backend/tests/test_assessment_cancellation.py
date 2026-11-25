@@ -1,6 +1,6 @@
 import httpx
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy import select, func
 from app import ai, main, assessment_jobs as jobs
 from app.models import Run, RunSummary, Audit
@@ -13,7 +13,7 @@ from .test_continue_assessment import payload, findings
 def test_cancel_before_start_prevents_inference(db, monkeypatch):
     a=assessment(db,standard(db).id)
     job=main.reserve_assessment_run(a['id'],db)
-    main.cancel_assessment_run(job['id'])
+    main.cancel_assessment_run(job['id'], a['id'])
     monkeypatch.setattr(ai,'provider',lambda:pytest.fail('No inference'))
     with pytest.raises(HTTPException) as exc:
         main.run_assessment(a['id'],RunInput(job_id=job['id']),db)
@@ -50,7 +50,7 @@ def test_completed_job_late_cancel_is_honest_and_cannot_reuse(db):
     job=main.reserve_assessment_run(a['id'],db)
     result=main.run_assessment(a['id'],RunInput(job_id=job['id']),db)
     assert result['id']
-    assert main.cancel_assessment_run(job['id'])['status']=='completed'
+    assert main.cancel_assessment_run(job['id'], a['id'])['status']=='completed'
     with pytest.raises(HTTPException) as exc:
         main.run_assessment(a['id'],RunInput(job_id=job['id']),db)
     assert exc.value.status_code==409
@@ -75,6 +75,44 @@ def test_job_cannot_run_for_other_assessment():
     with pytest.raises(HTTPException) as exc:
         with jobs.generation(job['id'],'two'):pytest.fail('Wrong assessment')
     assert exc.value.status_code==409
+
+
+def test_progress_and_cancel_require_the_same_assessment():
+    job=jobs.reserve('scope-owner')
+    for endpoint in (main.assessment_progress, main.cancel_assessment_run):
+        with pytest.raises(HTTPException) as denied:
+            endpoint(job['id'], 'scope-other')
+        assert denied.value.status_code==404
+    assert main.assessment_progress(job['id'], 'scope-owner')['status']=='pending'
+    assert main.cancel_assessment_run(job['id'], 'scope-owner')['status']=='cancelled'
+
+
+def test_start_queues_once_and_requires_consent_and_current_revision(db, monkeypatch):
+    from contextlib import nullcontext
+
+    a=assessment(db,standard(db).id)
+    job=main.reserve_assessment_run(a['id'],db)
+    background=BackgroundTasks()
+    body=RunInput(job_id=job['id'],expected_version=a['current_version'])
+    with pytest.raises(HTTPException) as denied:
+        main.start_assessment_run(a['id'], body, background, db)
+    assert denied.value.status_code==422
+    body=body.model_copy(update={'authorize_external':True})
+    stale=body.model_copy(update={'expected_version':a['current_version']+1})
+    with pytest.raises(HTTPException) as denied:
+        main.start_assessment_run(a['id'], stale, background, db)
+    assert denied.value.status_code==409
+    assert main.start_assessment_run(a['id'], body, background, db)=={'job_id':job['id']}
+    assert main.assessment_progress(job['id'],a['id'])['status']=='queued'
+    assert db.scalar(select(func.count()).select_from(Run))==0
+    with pytest.raises(HTTPException) as duplicate:
+        main.start_assessment_run(a['id'], body, background, db)
+    assert duplicate.value.status_code==409
+    monkeypatch.setattr(main,'SessionLocal',lambda:nullcontext(db))
+    task=background.tasks[0]
+    task.func(*task.args,**task.kwargs)
+    assert main.assessment_progress(job['id'],a['id'])['status']=='completed'
+    assert db.scalar(select(func.count()).select_from(Run))==1
 
 
 def test_default_assessment_batch_is_five(monkeypatch):

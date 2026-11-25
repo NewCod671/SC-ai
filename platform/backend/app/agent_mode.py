@@ -1,5 +1,8 @@
 """Isolated experimental assessment workflow and explicit human-reviewed examples."""
-from copy import deepcopy
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
+from copy import copy,deepcopy
+from itertools import islice
 from datetime import datetime,timezone
 import json
 import os
@@ -7,7 +10,7 @@ import time
 from fastapi import HTTPException
 from sqlalchemy import select,update
 from .models import Assessment,Standard,Revision,Evidence,Policy,AgentRun,AuditorFeedback,AssessmentAISettings
-from . import assessment_jobs, audit_classification, codex_provider, assessment_policy, grading_knowledge, knowledge
+from . import assessment_jobs, audit_classification, codex_provider, assessment_policy, grading_knowledge, knowledge, standard_profiles
 from .reporting import excel
 from .answer_departments import digest,public_context
 from .outcomes import summarize
@@ -55,21 +58,28 @@ def approved_examples(db,assessment_id,control,bundle=None):
     return result
 
 
-def make_case(inputs,control,examples,grading_cases=None,standard_knowledge=None):
+def make_case(inputs,control,examples,grading_cases=None,standard_knowledge=None,standard_profile=None,standard_meta=None):
     cid=control['id']
     context={k:v for k,v in inputs['context'].items() if k!='departments'}
     questions=[{k:v for k,v in q.items() if k not in {'department','departments'}}
         for q in inputs['questions'] if cid in q.get('control_ids',[q.get('control_id')])]
     case_control={k:v for k,v in control.items() if k in {'id','requirement'}}
-    case_control['grading_examples']=grading_knowledge.examples(control,grading_cases)
+    grading_enabled=True if standard_profile is None else standard_profile.grading_knowledge_enabled
+    case_control['grading_examples']=grading_knowledge.examples(control,grading_cases,enabled=grading_enabled)
+    if standard_profile is not None:
+        guidance=standard_profiles.control_rules(standard_profile,cid)
+        if guidance:case_control['standard_guidance']=guidance
     if standard_knowledge is not None:
         scoped_kb=knowledge.scope_knowledge(standard_knowledge,{cid})
         if scoped_kb['entries']:case_control['standard_knowledge']=scoped_kb
-    return {'control_id':cid,'control':case_control,
+    case={'control_id':cid,'control':case_control,
         'context':context,'answer':inputs['answers'][cid],
         'questions':questions,
         'evidence':[], 'policies':[],
         'approved_examples':examples}
+    if standard_meta is not None:
+        case['standard']=standard_meta
+    return case
 
 
 def pending(cid,reason='Not assessed by Codex or insufficient recorded information.',questions=None):
@@ -93,12 +103,15 @@ def assessed_inputs(inputs):
 
 def run_json(db,a,run):
     s=get(db,Standard,a.standard_id)
+    profile=standard_profiles.resolve(s)
     snapshot=run.snapshot
     stale=a.current_version!=run.revision or digest(assessed_inputs(client_inputs(db,a)))!=snapshot['client_hash'] or snapshot.get('context_protocol')!=codex_provider.CONTEXT_PROTOCOL
     try:stale=stale or digest(codex_provider.skill_bundle())!=digest(snapshot['skills'])
     except (ValueError,OSError,KeyError):stale=True
-    stale=stale or snapshot.get('grading_knowledge')!=grading_knowledge.load()[1]
-    stale=stale or snapshot.get('standard_knowledge')!=knowledge.ISO27001_2022_REF
+    expected_grading=grading_knowledge.load()[1] if profile.grading_knowledge_enabled else None
+    stale=stale or snapshot.get('grading_knowledge')!=expected_grading
+    stale=stale or snapshot.get('standard_knowledge')!=profile.knowledge_ref
+    stale=stale or snapshot.get('standard_profile')!=standard_profiles.profile_snapshot(s,profile)
     result=deepcopy(run.results)
     summary=summarize(s,result)
     if run.status not in {'completed','completed_with_warnings'}:
@@ -130,6 +143,72 @@ def control_batches(controls,cases,size,char_limit):
     if batch:yield batch
 
 
+def batch_workers():
+    try:
+        workers=int(os.getenv('CODEX_BATCH_WORKERS','2'))
+        if not 1<=workers<=2:raise ValueError()
+        return workers
+    except ValueError:raise HTTPException(503,'Invalid Codex batch worker configuration')
+
+
+def assess_batch(provider,cases):
+    worker=copy(provider)
+    worker.usage_calls=[]
+    started=time.perf_counter()
+    error=None
+    rows=[]
+    assessment_jobs.check_cancelled()
+    try:
+        if callable(getattr(worker,'assess_controls',None)):
+            rows=worker.assess_controls(cases)
+            if not isinstance(rows,list):raise codex_provider.CodexError('codex_batch_json_invalid')
+        else:rows=[worker.assess_control(cases[0])]
+        assessment_jobs.check_cancelled()
+    except assessment_jobs.AssessmentCancelled:raise
+    except Exception as exc:
+        assessment_jobs.check_cancelled()
+        error=exc.code if isinstance(exc,codex_provider.CodexError) else 'codex_validation_failed'
+    usage=worker.usage_calls or [safe_usage({'control_ids':[case['control_id'] for case in cases]})]
+    return rows,error,usage,time.perf_counter()-started
+
+
+def batch_results(executor,batches,provider,cases,workers,remaining_attempts):
+    if workers==1:
+        for batch in batches:
+            yield batch,assess_batch(provider,[cases[c['id']] for c in batch])
+        return
+    while wave:=list(islice(batches,min(workers,remaining_attempts()))):
+        futures=[executor.submit(copy_context().run,assess_batch,provider,[cases[c['id']] for c in batch])
+                 for batch in wave]
+        for batch,future in zip(wave,futures):
+            yield batch,future.result()
+
+
+def assess_repair(provider,case):
+    worker=copy(provider)
+    worker.usage_calls=[]
+    started=time.perf_counter()
+    error=None
+    finding=None
+    assessment_jobs.check_cancelled()
+    try:
+        if callable(getattr(worker,'assess_control',None)):
+            row=worker.assess_control(case)
+        else:
+            rows=worker.assess_controls([case])
+            if not isinstance(rows,list) or len(rows)!=1:
+                raise codex_provider.CodexError('codex_batch_coverage_invalid')
+            row=rows[0]
+        finding=codex_provider.validate_result({'finding':row},case)
+        assessment_jobs.check_cancelled()
+    except assessment_jobs.AssessmentCancelled:raise
+    except Exception as exc:
+        assessment_jobs.check_cancelled()
+        error=exc.code if isinstance(exc,codex_provider.CodexError) else 'codex_validation_failed'
+    usage=[safe_usage(item) for item in worker.usage_calls] or [safe_usage({'control_ids':[case['control_id']],'request_seconds':time.perf_counter()-started})]
+    return finding,error,usage
+
+
 def run(db,assessment_id,body,provider_factory=None):
     a=get(db,Assessment,assessment_id)
     if not body.authorize_external:
@@ -141,13 +220,18 @@ def run(db,assessment_id,body,provider_factory=None):
         provider=(provider_factory or codex_provider.CodexProvider)(bundle)
     except (ValueError,OSError,KeyError):raise HTTPException(503,'Codex skill or model configuration is invalid')
     size,char_limit=batch_limits()
-    if not callable(getattr(provider,'assess_controls',None)):size=1
+    workers=batch_workers()
+    if not callable(getattr(provider,'assess_controls',None)):size=workers=1
+    s=get(db,Standard,a.standard_id)
+    profile=standard_profiles.resolve(s)
+    std_meta=standard_profiles.standard_metadata(s,profile)
+    prof_snap=standard_profiles.profile_snapshot(s,profile)
     inputs=client_inputs(db,a);controls=inputs['controls'];revision=a.current_version
     started=time.perf_counter()
-    grading_cases,grading_snapshot=grading_knowledge.load()
-    std_knowledge=knowledge.prepare_iso27001_knowledge(controls)
-    cases={c['id']:make_case(inputs,c,approved_examples(db,a.id,c,bundle),grading_cases,std_knowledge) for c in controls}
-    hashes={cid:digest({'case':case,'provider':provider.name,'cli_version':readiness['version'],'skills':bundle,'context_protocol':codex_provider.CONTEXT_PROTOCOL}) for cid,case in cases.items()}
+    grading_cases,grading_snapshot=grading_knowledge.load() if profile.grading_knowledge_enabled else (None,None)
+    std_knowledge=knowledge.prepare_for_standard(s,controls)
+    cases={c['id']:make_case(inputs,c,approved_examples(db,a.id,c,bundle),grading_cases,std_knowledge,profile,std_meta) for c in controls}
+    hashes={cid:digest({'case':case,'provider':provider.name,'cli_version':readiness['version'],'skills':bundle,'context_protocol':codex_provider.CONTEXT_PROTOCOL,'standard_profile':prof_snap}) for cid,case in cases.items()}
     values={c['id']:pending(c['id'],questions=cases[c['id']]['control'].get('assessment_questions',[])) for c in controls};reused=[]
     history=db.scalars(select(AgentRun).where(AgentRun.assessment_id==a.id).order_by(AgentRun.created_at.desc(),AgentRun.id.desc())).all()
     if not body.full_reassessment:
@@ -162,8 +246,8 @@ def run(db,assessment_id,body,provider_factory=None):
     plan={'incremental':True,'assessment_unit':'control','assessment_control_count':len(controls),
         'requests':0,'repair_requests':0,'retry_count':0,'ai_control_ids':[],'reused_control_ids':reused[:],
         'failed_control_ids':[],'unanswered_control_ids':[],'warnings':[],'control_metrics':[],
-        'batch_size':size,'batch_max_chars':char_limit,'batch_metrics':[],'provider_config':getattr(provider,'cache_config',{})}
-    snapshot={'context_protocol':codex_provider.CONTEXT_PROTOCOL,'experimental':True,'assessment_basis':assessment_policy.SC_ANSWERS,'grading_knowledge':grading_snapshot,'standard_knowledge':knowledge.ISO27001_2022_REF,'inputs':inputs,'client_hash':digest(assessed_inputs(inputs)),'input_fingerprints':hashes,
+        'batch_size':size,'batch_workers':workers,'batch_max_chars':char_limit,'batch_metrics':[],'provider_config':getattr(provider,'cache_config',{})}
+    snapshot={'context_protocol':codex_provider.CONTEXT_PROTOCOL,'experimental':True,'assessment_basis':assessment_policy.SC_ANSWERS,'grading_knowledge':grading_snapshot,'standard_knowledge':profile.knowledge_ref,'standard_profile':prof_snap,'standard':std_meta,'inputs':inputs,'client_hash':digest(assessed_inputs(inputs)),'input_fingerprints':hashes,
         'skills':bundle,'assessment_plan':plan,'codex_health':readiness,
         'authorization':{'external_data_authorized':True,'revision':revision,'client_hash':digest(assessed_inputs(inputs)),'at':datetime.now(timezone.utc).isoformat(),
                          'destination':'OpenAI via official saved-login Codex CLI','payload':'Scoped requirements, context, recorded customer answers and approved same-assessment answer examples; archived evidence and policy attachments are excluded'}}
@@ -171,6 +255,7 @@ def run(db,assessment_id,body,provider_factory=None):
     db.add(record);db.commit();run_id=record.id
     assessment_jobs.publish(phase='codex',total=len(controls),completed_ids=reused,validated_ids=reused)
     failures=0
+    executor=ThreadPoolExecutor(max_workers=workers,thread_name_prefix='codex-batch') if workers>1 else None
     def save(status):
         snapshot['assessment_plan']=deepcopy(plan);snapshot['usage']=process_usage(provider,time.perf_counter()-started)
         record.status=status;record.snapshot=deepcopy(snapshot);record.results=[deepcopy(values[c['id']]) for c in controls]
@@ -184,24 +269,13 @@ def run(db,assessment_id,body,provider_factory=None):
                 plan['unanswered_control_ids'].append(cid)
                 assessment_jobs.publish(completed_ids=[cid])
             else:work.append(control)
-        for batch in control_batches(work,cases,size,char_limit):
+        batches=control_batches(work,cases,size,char_limit)
+        for batch,(rows,batch_error,usage,seconds) in batch_results(executor,batches,provider,cases,workers,lambda:3-failures):
             assessment_jobs.check_cancelled()
             ids=[c['id'] for c in batch]
             step=next(i for i,c in enumerate(controls,1) if c['id']==ids[0])
-            began=time.perf_counter();before=len(provider.usage_calls);plan['requests']+=1
-            batch_error=None;rows=[]
-            try:
-                if callable(getattr(provider,'assess_controls',None)):
-                    rows=provider.assess_controls([cases[cid] for cid in ids])
-                    if not isinstance(rows,list):raise codex_provider.CodexError('codex_batch_json_invalid')
-                else:rows=[provider.assess_control(cases[ids[0]])]
-                assessment_jobs.check_cancelled()
-            except assessment_jobs.AssessmentCancelled:raise
-            except Exception as exc:
-                assessment_jobs.check_cancelled()
-                batch_error=exc.code if isinstance(exc,codex_provider.CodexError) else 'codex_validation_failed'
-            finally:
-                if len(provider.usage_calls)==before:provider.usage_calls.append(safe_usage({'control_ids':ids}))
+            plan['requests']+=1
+            provider.usage_calls.extend(usage)
             failed=[];valid=[]
             for cid in ids:
                 assessment_jobs.check_cancelled()
@@ -209,7 +283,31 @@ def run(db,assessment_id,body,provider_factory=None):
                     if batch_error:raise codex_provider.CodexError(batch_error)
                     matches=[row for row in rows if isinstance(row,dict) and row.get('control_id')==cid]
                     if len(matches)!=1:raise codex_provider.CodexError('codex_batch_coverage_invalid')
-                    values[cid]=codex_provider.validate_result({'finding':matches[0]},cases[cid])
+                    raw_row=matches[0]
+                    conflict=audit_classification.has_conflict(raw_row,answer_based=True)
+                    validated=codex_provider.validate_result({'finding':raw_row},cases[cid])
+                    if not conflict and (validated.get('audit') or {}).get('reason')==audit_classification.CONFLICT_REASON:
+                        conflict=audit_classification.CONFLICT_REASON
+                    if conflict:
+                        repair_case={
+                            **cases[cid],
+                            'elevate_reasoning':True,
+                            'repair_instruction':(
+                                f'REPAIR PASS: Your previous classification had conflicting fields ({conflict}). '
+                                'Re-evaluate this single control carefully and return a strictly consistent finding '
+                                'where status, audit.category, audit.requirement_gap, audit.system_impact, and '
+                                'recommendation obey all contract rules.'
+                            ),
+                        }
+                        plan['repair_requests']+=1
+                        plan['requests']+=1
+                        repaired,rep_err,rep_usage=assess_repair(provider,repair_case)
+                        provider.usage_calls.extend(rep_usage)
+                        if repaired is not None and not rep_err and not audit_classification.has_conflict(repaired,answer_based=True):
+                            validated=repaired
+                        elif rep_err:
+                            plan['warnings'].append({'control_ids':[cid],'code':rep_err,'stage':'codex_repair','step':step})
+                    values[cid]=validated
                     plan['ai_control_ids'].append(cid);valid.append(cid)
                     assessment_jobs.publish(completed_ids=[cid],validated_ids=[cid])
                 except (ValueError,TypeError,KeyError) as exc:
@@ -218,7 +316,6 @@ def run(db,assessment_id,body,provider_factory=None):
                     plan['warnings'].append({'control_ids':[cid],'code':code,'stage':'codex','step':step})
                     values[cid]=pending(cid,'Codex assessment failed ('+code+').',cases[cid]['control'].get('assessment_questions',[]))
                     assessment_jobs.publish(completed_ids=[cid],failed_ids=[cid])
-            seconds=time.perf_counter()-began
             plan['batch_metrics'].append({'control_ids':ids,'seconds':seconds,'validated':len(valid),'failed':len(failed)})
             plan['control_metrics'].extend({'control_id':cid,'seconds':seconds/len(ids),'timing_basis':'shared_batch_average'} for cid in ids)
             failures=failures+1 if failed and not valid else 0
@@ -235,6 +332,8 @@ def run(db,assessment_id,body,provider_factory=None):
         # Successfully validated rows are durable, but the run remains explicitly partial.
         plan['ai_control_ids']=list(dict.fromkeys(reused+plan['ai_control_ids']))
         save('cancelled');raise
+    finally:
+        if executor is not None:executor.shutdown(cancel_futures=True)
     db.refresh(a)
     return run_json(db,a,record)
 

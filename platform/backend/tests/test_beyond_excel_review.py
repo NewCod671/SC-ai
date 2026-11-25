@@ -47,9 +47,9 @@ def test_note_review_skill_loads_and_covers_beyond_excel():
     skill = note_review_skill.load_note_review_skill()
     assert skill['name'] == 'note-reviewer'
     assert 'standard_knowledge' in skill['instructions']
-    assert 'ISO/IEC 27001:2022' in skill['instructions']
-    assert 'ISO/IEC 27002' in skill['instructions']
-    assert 'upper limit' in skill['instructions']
+    assert 'control.standard_guidance' in skill['instructions']
+    assert 'never mark a topic `covered` solely from `related_saved_notes`' in skill['instructions']
+    assert 'scope/extent' in skill['instructions']
     assert 'Do not judge conformity, severity, C, OFI, NC-Minor, or NC-Major' in skill['instructions']
 
 
@@ -327,8 +327,8 @@ def test_codex_run_attaches_iso27001_knowledge_and_invalidates_prior_runs_withou
 
 def test_codex_skill_bundle_and_compaction_preserve_single_style_block():
     bundle = codex_provider.skill_bundle()
-    assert bundle['iso27001-auditor']['version'] == '1.13.0'
-    assert bundle['finding-classifier']['version'] == '1.16.0'
+    assert bundle['iso27001-auditor']['version'] == '1.15.0'
+    assert bundle['finding-classifier']['version'] == '1.18.0'
     assert 'ISO/IEC 27001:2022' in bundle['iso27001-auditor']['instructions']
     assert 'ISO/IEC 27002' in bundle['finding-classifier']['instructions']
     spec = template_skill('sc-iso27001-audit-review', SimpleNamespace(

@@ -125,6 +125,15 @@ class AssessmentAISettings(Base):
     assessment_id: Mapped[str] = mapped_column(ForeignKey('assessments.id'), primary_key=True)
     mode: Mapped[str] = mapped_column(String(20), default='colab')
 
+class NoteCoverageCheck(Base):
+    __tablename__ = 'note_coverage_checks'
+    assessment_id: Mapped[str] = mapped_column(ForeignKey('assessments.id', ondelete='CASCADE'), primary_key=True)
+    control_id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    mode: Mapped[str] = mapped_column(String(20), primary_key=True)
+    fingerprint: Mapped[str] = mapped_column(String(64), primary_key=True)
+    missing_details: Mapped[str] = mapped_column(String)
+
+
 class AgentRun(Base):
     __tablename__ = 'agent_runs'
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)

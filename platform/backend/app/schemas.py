@@ -100,6 +100,7 @@ class SkillVersionInput(Strict):
     change_note: str = Field(min_length=1, max_length=4000)
 
 class RunInput(Strict):
+    expected_version: int | None = Field(default=None, ge=1)
     processing_mode: Literal['colab','codex'] | None = None
     authorize_external: bool = False
     job_id: str | None = Field(default=None, max_length=36)

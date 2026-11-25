@@ -23,8 +23,58 @@ RULES = (
 )
 
 
+CONFLICT_REASON = 'Classification fields conflict with the stated status or impact; review before confirming.'
+
+
 def pending(reason):
     return {'category':'needs_review','reason':reason,'requirement_gap':'','system_impact':'unknown'}
+
+
+def has_conflict(finding, *, answer_based=False):
+    if not isinstance(finding, dict):
+        return 'Finding must be an object'
+    audit = finding.get('audit')
+    if not isinstance(audit, dict):
+        return 'Missing audit classification object'
+    category = audit.get('category')
+    status = finding.get('status')
+    reason = str(audit.get('reason') or '').strip()
+    gap = str(audit.get('requirement_gap') or '').strip()
+    impact = audit.get('system_impact', 'unknown')
+    rec = str(finding.get('recommendation') or '').strip()
+    if (answer_based and category in {'comply', 'ofi'} and status == 'met'
+            and not gap and impact == 'unknown'):
+        impact = 'does_not_affect'
+    if not reason:
+        return 'audit.reason must be nonempty'
+    if category in {'comply', 'ofi'}:
+        if status != 'met':
+            return f"status='{status}' conflicts with audit.category='{category}' (requires status='met')"
+        if gap:
+            return f"audit.category='{category}' requires empty requirement_gap"
+        if impact != 'does_not_affect':
+            return f"audit.category='{category}' requires system_impact='does_not_affect'"
+        if category == 'ofi' and not rec:
+            return 'ofi requires nonempty recommendation'
+    elif category in {'nc_minor', 'nc_major'}:
+        if status not in {'gap', 'partial'}:
+            return f"status='{status}' conflicts with audit.category='{category}' (requires status='gap' or 'partial')"
+        if not gap:
+            return f"audit.category='{category}' requires nonempty requirement_gap"
+        expected_impact = 'affects' if category == 'nc_major' else 'does_not_affect'
+        if impact != expected_impact:
+            return f"audit.category='{category}' requires system_impact='{expected_impact}' (got '{impact}')"
+    elif category == 'not_applicable':
+        if status != 'not_applicable':
+            return f"status='{status}' conflicts with audit.category='not_applicable'"
+    elif category == 'needs_review':
+        if status == 'met':
+            return "status='met' conflicts with audit.category='needs_review'"
+    else:
+        return f"Unknown audit.category='{category}'"
+    if status == 'needs_review' and category != 'needs_review':
+        return f"status='needs_review' conflicts with audit.category='{category}'"
+    return None
 
 
 def normalize(finding, invalid_reason=None, *, answer_based=False):
@@ -52,6 +102,8 @@ def normalize(finding, invalid_reason=None, *, answer_based=False):
         invalid |= status != 'not_applicable'
     if invalid or (status == 'needs_review' and category != 'needs_review'):
         finding['audit'] = pending(invalid_reason or 'ต้องตรวจเหตุผล ข้อกำหนดที่ไม่เป็นไปตามเกณฑ์ หรือผลกระทบต่อระบบก่อนยืนยันระดับ')
+        if finding.get('status') == 'met':
+            finding['status'] = 'needs_review'
     return finding
 
 

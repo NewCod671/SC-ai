@@ -61,7 +61,5 @@ Original test-project assessment records were not imported.
 ## Verification
 
 ```powershell
-.\platform\.venv\Scripts\python.exe -m pytest platform/backend/tests/test_map_answers.py platform/backend/tests/test_config.py -q
-npm.cmd --prefix SC-Project-main run build
-node --test SC-Project-main/tests/compliance-mapping.test.mjs
+.\scripts\Test-SC.ps1
 ```
